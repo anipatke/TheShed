@@ -9,7 +9,7 @@ No database, no cloud, no accounts, no Docker, no admin rights. One Node process
 
 ## Quick start
 
-Requires Node **22.18+** (the server runs TypeScript directly, with no build step and no runtime dependencies).
+Requires Node **22.18+**. The server runs TypeScript directly, with no build step and no runtime dependencies. The UI is React, built with Vite.
 
 ```sh
 npm install
@@ -21,7 +21,7 @@ Development (API restarts on change, UI hot-reloads):
 
 ```sh
 npm run dev        # UI at http://localhost:4778, API proxied to :4777
-npm test           # parser, heuristic and probe tests (node:test)
+npm test           # discovery parsing, project inference, probe, config and folder tests (node:test)
 ```
 
 | Env var | Default | |
@@ -120,20 +120,24 @@ Favourites and overrides are keyed by **project folder + process** (or `env + po
 ## Layout
 
 ```
-server/            Node HTTP server, no runtime deps
-  index.ts         routes, Host/Origin checks, static files
-  scan.ts          orchestration, caching, naming
-  identify.ts      cwd/command line → project folder → name
-  probe.ts         HTTP classification and title extraction
-  config.ts        validated JSON store
-  discovery/       posix.ts (ss + /proc), windows.ts (PowerShell, netstat fallback)
-client/            React + Vite UI
-shared/types.ts    types used by both
-docs/SPIKE.md      discovery spike findings (the technical baseline)
-docs/V1-DESIGN.md  V1 design, task breakdown, acceptance results
+server/                 Node HTTP server, no runtime deps
+  index.ts              routes, Host/Origin checks, static files from dist/
+  scan.ts               orchestration, caching, naming
+  identify.ts           cwd/command line → project folder → name
+  probe.ts              HTTP classification and title extraction
+  config.ts             validated JSON store
+  discovery/            listener.ts (shared types), posix.ts (ss + /proc),
+                        windows.ts (PowerShell, netstat fallback), run.ts (fixed-command runner)
+  *.test.ts             node:test suites
+client/                 React + Vite UI (src/: App, Card, api, model, styles)
+shared/types.ts         types used by both
+scripts/dev.mjs         runs the API and the Vite dev server together
+data/                   config.json lives here by default (git-ignored)
+docs/SPIKE.md           discovery spike findings (the technical baseline)
+docs/V1-DESIGN.md       V1 design, task breakdown, acceptance results
+AGENTS.md, .savepoint/  project planning and review records (Savepoint); not needed to run The Shed
 ```
 
 ## Not in V1
 
 Starting or stopping processes. The Shed only reads.
-# TheShed

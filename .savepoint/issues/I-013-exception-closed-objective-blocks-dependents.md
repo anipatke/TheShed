@@ -2,7 +2,7 @@
 id: I-013
 title: An Objective closed by owner exception blocks every Objective that depends on it
 type: other
-status: open
+status: resolved
 source:
   kind: report
   actor: {role: executor, session: t012-retrospective-20261010}
@@ -10,11 +10,20 @@ source:
 tasks: [T-012]
 checks: [C-006]
 severity: low
+resolution:
+  disposition: accepted
+  actor: {role: owner, session: owner-goal02-close-20261010T204358Z}
+  at: '2026-10-10T20:43:58Z'
+  reason: "Owner accepted without change: an exception-closed Objective not counting as cleared is the intended behaviour, and removing the dependency is a recorded owner choice (O-003, O-004). Not a defect."
 history:
   - at: '2026-10-10T08:07:21Z'
     actor: {role: executor, session: t012-retrospective-20261010}
     kind: observed
     note: Goal 02 workflow retrospective (O-004, T-012) finding R6. Suggestion for the packaged runtime and skills; not edited here.
+  - at: '2026-10-10T20:43:58Z'
+    actor: {role: owner, session: owner-goal02-close-20261010T204358Z}
+    kind: owner_decision
+    note: "Owner accepted without change: an exception-closed Objective not counting as cleared is the intended behaviour, and removing the dependency is a recorded owner choice (O-003, O-004). Not a defect."
 ---
 
 # I-013: An Objective closed by owner exception blocks every Objective that depends on it

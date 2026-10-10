@@ -2,7 +2,7 @@
 id: I-014
 title: An initial Full Check does not keep its exact matrix cells, so re-checks demand vague replays
 type: other
-status: open
+status: resolved
 source:
   kind: report
   actor: {role: executor, session: t012-retrospective-20261010}
@@ -11,11 +11,20 @@ tasks: [T-012]
 checks: [C-003, C-004, C-005]
 guardrail_ids: [TEST-01]
 severity: medium
+resolution:
+  disposition: accepted
+  actor: {role: owner, session: owner-goal02-close-20261010T204358Z}
+  at: '2026-10-10T20:43:58Z'
+  reason: "Owner accepted: a suggestion for the packaged check-method reference; not fixable in this repo."
 history:
   - at: '2026-10-10T08:07:21Z'
     actor: {role: executor, session: t012-retrospective-20261010}
     kind: observed
     note: Goal 02 workflow retrospective (O-004, T-012) finding R5. Suggestion for agent-skills/references/check-method.md; not edited here.
+  - at: '2026-10-10T20:43:58Z'
+    actor: {role: owner, session: owner-goal02-close-20261010T204358Z}
+    kind: owner_decision
+    note: "Owner accepted: a suggestion for the packaged check-method reference; not fixable in this repo."
 ---
 
 # I-014: An initial Full Check does not keep its exact matrix cells, so re-checks demand vague replays

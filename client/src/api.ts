@@ -18,10 +18,10 @@ export const api = {
   editManual: (id: string, p: { name: string; url: string; folder?: string }) =>
     call(`/api/manual/${encodeURIComponent(id)}`, json('PUT', p)),
   setOverride: (key: string, o: { name?: string; folder?: string }) => call('/api/overrides', json('PUT', { key, ...o })),
-  removeManual: (id: string) => call(`/api/manual/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  removeManual: (id: string) => call(`/api/manual/${encodeURIComponent(id)}`, json('DELETE', {})),
   setFavourite: (fav: Omit<Favourite, 'lastSeen'>, favourite: boolean) =>
     call('/api/favourites', json('PUT', { ...fav, favourite })),
   hide: (rule: { kind: 'port'; env: Env; port: number } | { kind: 'process'; env: Env; process: string }) =>
     call('/api/hidden', json('POST', rule)),
-  unhide: (rule: HideRule) => call(`/api/hidden/${encodeURIComponent(rule.id)}`, { method: 'DELETE' }),
+  unhide: (rule: HideRule) => call(`/api/hidden/${encodeURIComponent(rule.id)}`, json('DELETE', {})),
 };

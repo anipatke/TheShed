@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config, State } from '../shared/types.ts';
-import { ConfigStore, parseFavourite, parseHideRule, parseManual, parseOverride, safeFolder } from './config.ts';
+import { ConfigFullError, ConfigStore, parseFavourite, parseHideRule, parseManual, parseOverride, safeFolder } from './config.ts';
 import { Scanner } from './scan.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -142,6 +142,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   }
 
   if (method === 'DELETE' && idMatch?.[1] === 'manual') {
+    await readJson(req); // body is `{}`; reading it enforces the JSON content type like other mutations
     store.update((c) => ({
       ...c,
       manual: c.manual.filter((m) => m.id !== idMatch[2]),
@@ -170,6 +171,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
   }
 
   if (method === 'DELETE' && idMatch?.[1] === 'hidden') {
+    await readJson(req);
     store.update((c) => ({ ...c, hidden: c.hidden.filter((h) => h.id !== idMatch[2]) }));
     return send(res, 200, await state());
   }
@@ -222,7 +224,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed');
     serveStatic(res, url.pathname);
   } catch (err) {
-    const status = err instanceof HttpError ? err.status : 500;
+    const status = err instanceof HttpError ? err.status : err instanceof ConfigFullError ? 409 : 500;
     if (status === 500) console.error('[shed]', err);
     if (!res.headersSent) send(res, status, { error: status === 500 ? 'Internal error' : (err as Error).message });
     else res.end();

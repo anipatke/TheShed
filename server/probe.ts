@@ -104,9 +104,11 @@ export function probe(target: ProbeTarget): Promise<Probe> {
         finish({ kind, status, contentType: contentType || undefined, title: kind === 'web' ? extractTitle(body) : undefined });
       };
       res.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-        size += chunk.length;
-        if (size >= MAX_BODY || /<\/title>/i.test(chunk.toString('latin1'))) settle();
+        // A chunk can straddle the cap; keep only the bytes inside it.
+        const kept = chunk.subarray(0, MAX_BODY - size);
+        chunks.push(kept);
+        size += kept.length;
+        if (size >= MAX_BODY || /<\/title>/i.test(kept.toString('latin1'))) settle();
       });
       res.on('end', settle);
       res.on('error', settle);

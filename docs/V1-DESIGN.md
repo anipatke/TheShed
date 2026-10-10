@@ -53,7 +53,7 @@ known, else `port:<env>:<port>`. Favourites and overrides are keyed by it.
 | `POST/DELETE /api/hidden[/:id]` | hide rules |
 | `PUT /api/overrides` | set or clear a name and folder for an identity key (NEW) |
 
-All mutations: JSON only, localhost Origin, validated, size-capped. No input ever reaches a command.
+All mutations (including DELETE, with body `{}`): JSON only, localhost Origin, validated, size-capped. Additions past 500 entries per list are refused (409), never silently dropped. No input ever reaches a command.
 
 ## Tasks
 

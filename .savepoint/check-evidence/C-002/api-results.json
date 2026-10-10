@@ -1,0 +1,98 @@
+[
+ {
+  "name": "DELETE hidden with absent content type",
+  "expected": "415, entry kept",
+  "actual": "415, kept=true",
+  "pass": true
+ },
+ {
+  "name": "DELETE manual with absent content type",
+  "expected": "415, entry kept",
+  "actual": "415, kept=true",
+  "pass": true
+ },
+ {
+  "name": "DELETE hidden with text/plain content type",
+  "expected": "415, entry kept",
+  "actual": "415, kept=true",
+  "pass": true
+ },
+ {
+  "name": "DELETE manual with text/plain content type",
+  "expected": "415, entry kept",
+  "actual": "415, kept=true",
+  "pass": true
+ },
+ {
+  "name": "DELETE hidden with form content type",
+  "expected": "415, entry kept",
+  "actual": "415, kept=true",
+  "pass": true
+ },
+ {
+  "name": "DELETE manual with form content type",
+  "expected": "415, entry kept",
+  "actual": "415, kept=true",
+  "pass": true
+ },
+ {
+  "name": "DELETE hidden JSON from remote Origin",
+  "expected": "403, kept",
+  "actual": "403, kept=true",
+  "pass": true
+ },
+ {
+  "name": "DELETE hidden with JSON {} (client format), localhost Origin",
+  "expected": "200, removed",
+  "actual": "200, hidden=0",
+  "pass": true
+ },
+ {
+  "name": "DELETE manual with JSON {}",
+  "expected": "200, removed",
+  "actual": "200, manual=0",
+  "pass": true
+ },
+ {
+  "name": "PUT override (rename+folder) still works",
+  "expected": "200",
+  "actual": "200",
+  "pass": true
+ },
+ {
+  "name": "POST manual at 500 saved",
+  "expected": "409 explicit error, 500 kept",
+  "actual": "409 \"Can't save more than 500 manual entries; remove some first\", saved=500",
+  "pass": true
+ },
+ {
+  "name": "Load 501 valid + 1 malformed manual",
+  "expected": "501 kept, malformed dropped",
+  "actual": "501",
+  "pass": true
+ },
+ {
+  "name": "DELETE at 501 (shrinks)",
+  "expected": "200, 500",
+  "actual": "200, 500",
+  "pass": true
+ },
+ {
+  "name": "POST at 500 after shrinking",
+  "expected": "409",
+  "actual": "409",
+  "pass": true
+ },
+ {
+  "name": "Restart keeps saved count",
+  "expected": "500",
+  "actual": "500",
+  "pass": true
+ },
+ {
+  "name": "POST at 499, then restart",
+  "expected": "200, new entry present",
+  "actual": "200, 500, present=true",
+  "pass": true
+ }
+]

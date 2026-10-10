@@ -291,10 +291,12 @@ export function Card({ item, actions }: { item: Item; actions: CardActions }) {
 
 /** Compact row for APIs, raw TCP listeners and hidden services. */
 export function Row({ item, actions }: { item: Item; actions: CardActions }) {
+  const [editing, setEditing] = useState(false);
   if (item.type !== 'service') return null;
   const s = item.service;
   return (
     <li className="row">
+      <Star on={item.favourite} onClick={() => actions.toggleFavourite(item)} name={item.name} />
       <span className="row__port">{s.port}</span>
       <StatusLamp item={item} />
       <span className="row__tags">
@@ -310,8 +312,13 @@ export function Row({ item, actions }: { item: Item; actions: CardActions }) {
       </span>
       <span className="row__actions">
         {item.kind !== 'other' && item.status !== 'offline' && <OpenLink item={item} compact />}
-        <ItemMenu item={item} actions={actions} />
+        <ItemMenu item={item} actions={actions} onEdit={!editing ? () => setEditing(true) : undefined} />
       </span>
+      {editing && (
+        <div className="row__edit">
+          <EditForm item={item} actions={actions} onDone={() => setEditing(false)} />
+        </div>
+      )}
     </li>
   );
 }

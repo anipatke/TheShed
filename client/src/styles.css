@@ -849,10 +849,10 @@ h1 {
 
 .row {
   display: grid;
-  grid-template-columns: 64px 118px 120px minmax(0, 1.3fr) minmax(0, 1fr) auto;
+  grid-template-columns: 32px 56px 118px 120px minmax(0, 1.3fr) minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 7px 12px;
+  padding: 7px 12px 7px 6px;
   font-size: 13px;
 }
 
@@ -889,6 +889,11 @@ h1 {
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
+}
+
+.row__edit {
+  grid-column: 1 / -1;
+  max-width: 560px;
 }
 
 .rules {
@@ -950,13 +955,19 @@ h1 {
   }
 
   .row {
-    grid-template-columns: 56px minmax(0, 1fr) auto;
-    grid-template-areas: 'port name actions' 'port status actions';
+    grid-template-columns: 32px 48px minmax(0, 1fr) auto;
+    grid-template-areas: 'star port name actions' 'star port status actions' 'edit edit edit edit';
     row-gap: 2px;
   }
 
+  .row > .star {
+    grid-area: star;
+  }
   .row__port {
     grid-area: port;
+  }
+  .row__edit {
+    grid-area: edit;
   }
   .row__name {
     grid-area: name;

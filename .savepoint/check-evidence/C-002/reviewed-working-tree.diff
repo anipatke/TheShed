@@ -1,0 +1,655 @@
+diff --git a/.savepoint/Design.md b/.savepoint/Design.md
+index b236214..c1d15f4 100644
+--- a/.savepoint/Design.md
++++ b/.savepoint/Design.md
+@@ -30,7 +30,7 @@ status: active
+ | `server/discovery/posix.ts` | WSL/Linux discovery script (`ss` + `/proc`) and parser; also run via `wsl.exe` from a Windows host |
+ | `server/discovery/windows.ts` | Windows discovery (PowerShell `-EncodedCommand`) with `netstat`/`tasklist` fallback, and parsers |
+ | `server/discovery/listener.ts` | `Listener` type, merge by env+port, text sanitising |
+-| `server/discovery.test.ts` | `node:test` suite: parsers, inference, classification, real-socket probes, config validation |
++| `server/discovery.test.ts` | `node:test` suite: parsers, inference, folder identification, classification, real-socket probes (body cap, truncation, TLS retry), source orchestration and netstat fallback, wslrelay dedupe, config validation and capacity |
+ | `shared/types.ts` | Types shared by server and client (`Service`, `Probe`, `Config`, `State`…) |
+ | `client/src/App.tsx` | Page shell: masthead, refresh/auto, filter, add-project form, sections, discovery notes, hide-rule chips |
+ | `client/src/Card.tsx` | Card, row, status lamp, kind tag, menu, inline rename/folder/manual edit form |
+@@ -43,7 +43,7 @@ status: active
+ 
+ **Scan pipeline:** sources (parallel) → `Listener[]` + `SourceReport[]` → merge by `env:port` → drop `wslrelay.exe` copies of WSL ports → per listener (16 at a time): identify + probe → `Service[]`. Manual projects are probed separately (8 at a time). The result is cached for 4 s; concurrent requests share one in-flight scan; `?refresh` bypasses the cache.
+ 
+-**API** (all JSON; mutations need `Content-Type: application/json` and a localhost or absent `Origin`; body ≤ 16 KB; every response is the full `State`):
++**API** (all JSON; mutations need `Content-Type: application/json` and a localhost or absent `Origin`; body ≤ 16 KB; `DELETE` takes the body `{}`; an addition that would take a list past 500 entries is refused with 409 and nothing is written; every response is the full `State`):
+ 
+ | Route | Effect |
+ |---|---|
+@@ -55,7 +55,7 @@ status: active
+ | `PUT /api/overrides` | set/clear a user name and folder for an identity key |
+ 
+ **Data ownership:**
+-- The server owns `data/config.json` (path overridable by `SHED_CONFIG`). The client never writes storage except the auto-refresh preference in `localStorage`.
++- The server owns `data/config.json` (path overridable by `SHED_CONFIG`). Loading keeps every valid entry, however many; the 500-per-list limit applies only to additions. The client never writes storage except the auto-refresh preference in `localStorage`.
+ - **Identity key** (`Service.favouriteKey`): `dir:<env>:<projectDir>#<processName>` when a folder is known, else `port:<env>:<port>`. Favourites and overrides are keyed by it. Manual projects use `manual:<id>`.
+ - **Kind vs status** (client `model.ts`): probe `web`→Website, `http`→API, `tcp`→Other; status is Live for those three, Unverified for `unverified`, Offline for `closed` or a favourite not currently present.
+ - **Unverified:** a discovered listener whose probe could not connect is reported `unverified`, never `closed`, because the OS has just reported it listening.
+@@ -82,12 +82,13 @@ Verified by reading the code and by runs recorded in T-001 evidence:
+ 
+ - All routes, validation and discovery described above exist and run. Gates: `npm run typecheck`, `npm run build`, `npm test` (21 tests) pass as of 2026-10-09T23:52Z.
+ - Acceptance verified on one machine (Windows 11 + WSL2 Ubuntu, mirrored networking): WSL and Windows Vite apps discovered, identified, renamed, favourited, opened; preferences survived a restart that also moved the server from WSL Node to Windows Node.
+-- Netstat fallback ran once, against real output, when an early PowerShell invocation failed. It is not covered by an automated forced-failure test.
++- Netstat fallback ran once, against real output, when an early PowerShell invocation failed; a `node:test` case now forces it with a fake runner.
++- 2026-10-10 repairs for I-001..I-005 (C-001): `npm test` 46 tests pass; the UI (row star, row rename/folder, hidden/offline/website cases, add-form failed save and retry) was driven in headless Windows Edge against a WSL-hosted server, mirrored networking.
+ 
+ **Unknown / not examined:**
+ - WSL NAT networking mode and plain (non-WSL) Linux: code paths exist but were not run.
+ - Behaviour with a non-default WSL distro or no WSL installed on a Windows host: not run.
+-- Client code (`model.ts`, components) has no automated tests; UI behaviour was checked by API calls and screenshots, not by scripted browser interaction.
++- Client code (`model.ts`, components) has no automated tests. UI behaviour has recorded scenarios (API calls, screenshots, and a scripted headless-Edge run for the 2026-10-10 repairs), not a test suite.
+ - No linter is configured.
+ 
+ ## Verification Contract
+diff --git a/README.md b/README.md
+index a41537f..5d112a3 100644
+--- a/README.md
++++ b/README.md
+@@ -91,7 +91,7 @@ The Shed lists processes on your machine, so the server is locked down even thou
+ 
+ - Listens on `127.0.0.1` only (the address is hard-coded).
+ - Rejects any request whose `Host` isn't `localhost`/`127.0.0.1`/`[::1]`, which blocks DNS-rebinding attacks from web pages.
+-- Mutations require `Content-Type: application/json` and a localhost `Origin` (or none), so other sites can't post to it.
++- Mutations, including `DELETE` (body `{}`), require `Content-Type: application/json` and a localhost `Origin` (or none), so other sites can't post to it.
+ - The frontend can't make the server run anything. Discovery runs constant scripts through `execFile` (no shell interpolation), and no request data or service data ever reaches a command.
+ - **Discovered services are untrusted**. Titles are reduced to plain text (tags, control and bidi characters stripped, capped at 120 chars) and rendered as text. Open links are built by the server from the port number, never taken from a service. `package.json` reads are size-capped and type-checked.
+ - Manual project URLs must be `http(s)`. Only loopback URLs are probed, so the server can't be used as a proxy to other hosts.
+diff --git a/client/src/Card.tsx b/client/src/Card.tsx
+index c164044..dee8b3c 100644
+--- a/client/src/Card.tsx
++++ b/client/src/Card.tsx
+@@ -291,10 +291,12 @@ export function Card({ item, actions }: { item: Item; actions: CardActions }) {
+ 
+ /** Compact row for APIs, raw TCP listeners and hidden services. */
+ export function Row({ item, actions }: { item: Item; actions: CardActions }) {
++  const [editing, setEditing] = useState(false);
+   if (item.type !== 'service') return null;
+   const s = item.service;
+   return (
+     <li className="row">
++      <Star on={item.favourite} onClick={() => actions.toggleFavourite(item)} name={item.name} />
+       <span className="row__port">{s.port}</span>
+       <StatusLamp item={item} />
+       <span className="row__tags">
+@@ -310,8 +312,13 @@ export function Row({ item, actions }: { item: Item; actions: CardActions }) {
+       </span>
+       <span className="row__actions">
+         {item.kind !== 'other' && item.status !== 'offline' && <OpenLink item={item} compact />}
+-        <ItemMenu item={item} actions={actions} />
++        <ItemMenu item={item} actions={actions} onEdit={!editing ? () => setEditing(true) : undefined} />
+       </span>
++      {editing && (
++        <div className="row__edit">
++          <EditForm item={item} actions={actions} onDone={() => setEditing(false)} />
++        </div>
++      )}
+     </li>
+   );
+ }
+diff --git a/client/src/api.ts b/client/src/api.ts
+index 4e06dd9..fb46e3d 100644
+--- a/client/src/api.ts
++++ b/client/src/api.ts
+@@ -18,10 +18,10 @@ export const api = {
+   editManual: (id: string, p: { name: string; url: string; folder?: string }) =>
+     call(`/api/manual/${encodeURIComponent(id)}`, json('PUT', p)),
+   setOverride: (key: string, o: { name?: string; folder?: string }) => call('/api/overrides', json('PUT', { key, ...o })),
+-  removeManual: (id: string) => call(`/api/manual/${encodeURIComponent(id)}`, { method: 'DELETE' }),
++  removeManual: (id: string) => call(`/api/manual/${encodeURIComponent(id)}`, json('DELETE', {})),
+   setFavourite: (fav: Omit<Favourite, 'lastSeen'>, favourite: boolean) =>
+     call('/api/favourites', json('PUT', { ...fav, favourite })),
+   hide: (rule: { kind: 'port'; env: Env; port: number } | { kind: 'process'; env: Env; process: string }) =>
+     call('/api/hidden', json('POST', rule)),
+-  unhide: (rule: HideRule) => call(`/api/hidden/${encodeURIComponent(rule.id)}`, { method: 'DELETE' }),
++  unhide: (rule: HideRule) => call(`/api/hidden/${encodeURIComponent(rule.id)}`, json('DELETE', {})),
+ };
+diff --git a/client/src/styles.css b/client/src/styles.css
+index cdce64a..b0d7ca8 100644
+--- a/client/src/styles.css
++++ b/client/src/styles.css
+@@ -849,10 +849,10 @@ h1 {
+ 
+ .row {
+   display: grid;
+-  grid-template-columns: 64px 118px 120px minmax(0, 1.3fr) minmax(0, 1fr) auto;
++  grid-template-columns: 32px 56px 118px 120px minmax(0, 1.3fr) minmax(0, 1fr) auto;
+   align-items: center;
+   gap: 12px;
+-  padding: 7px 12px;
++  padding: 7px 12px 7px 6px;
+   font-size: 13px;
+ }
+ 
+@@ -891,6 +891,11 @@ h1 {
+   gap: 4px;
+ }
+ 
++.row__edit {
++  grid-column: 1 / -1;
++  max-width: 560px;
++}
++
+ .rules {
+   display: flex;
+   flex-wrap: wrap;
+@@ -950,14 +955,20 @@ h1 {
+   }
+ 
+   .row {
+-    grid-template-columns: 56px minmax(0, 1fr) auto;
+-    grid-template-areas: 'port name actions' 'port status actions';
++    grid-template-columns: 32px 48px minmax(0, 1fr) auto;
++    grid-template-areas: 'star port name actions' 'star port status actions' 'edit edit edit edit';
+     row-gap: 2px;
+   }
+ 
++  .row > .star {
++    grid-area: star;
++  }
+   .row__port {
+     grid-area: port;
+   }
++  .row__edit {
++    grid-area: edit;
++  }
+   .row__name {
+     grid-area: name;
+   }
+diff --git a/docs/V1-DESIGN.md b/docs/V1-DESIGN.md
+index 0b82b63..01ea2f0 100644
+--- a/docs/V1-DESIGN.md
++++ b/docs/V1-DESIGN.md
+@@ -53,7 +53,7 @@ known, else `port:<env>:<port>`. Favourites and overrides are keyed by it.
+ | `POST/DELETE /api/hidden[/:id]` | hide rules |
+ | `PUT /api/overrides` | set or clear a name and folder for an identity key (NEW) |
+ 
+-All mutations: JSON only, localhost Origin, validated, size-capped. No input ever reaches a command.
++All mutations (including DELETE, with body `{}`): JSON only, localhost Origin, validated, size-capped. Additions past 500 entries per list are refused (409), never silently dropped. No input ever reaches a command.
+ 
+ ## Tasks
+ 
+diff --git a/server/config.ts b/server/config.ts
+index 25dca13..c060a97 100644
+--- a/server/config.ts
++++ b/server/config.ts
+@@ -4,7 +4,11 @@ import path from 'node:path';
+ import type { Config, Env, Favourite, HideRule, ManualProject, Override } from '../shared/types.ts';
+ 
+ const ENVS: Env[] = ['windows', 'wsl', 'linux'];
+-const MAX_ITEMS = 500;
++/** Additions stop at this many entries per list. Entries already saved are never dropped for count. */
++export const MAX_ITEMS = 500;
++
++/** A change would grow a list past MAX_ITEMS. Nothing was written. */
++export class ConfigFullError extends Error {}
+ 
+ export const emptyConfig = (): Config => ({ version: 1, manual: [], favourites: [], hidden: [], overrides: [] });
+ 
+@@ -89,7 +93,7 @@ export function parseHideRule(v: unknown, id?: string): HideRule | undefined {
+ export function sanitizeConfig(raw: unknown): Config {
+   const o = (raw ?? {}) as Record<string, unknown>;
+   const list = <T>(v: unknown, parse: (x: unknown) => T | undefined): T[] =>
+-    (Array.isArray(v) ? v : []).slice(0, MAX_ITEMS).map((x) => parse(x)).filter((x): x is T => x !== undefined);
++    (Array.isArray(v) ? v : []).map((x) => parse(x)).filter((x): x is T => x !== undefined);
+   return {
+     version: 1,
+     manual: list(o.manual, (x) => parseManual(x)),
+@@ -137,6 +141,11 @@ export class ConfigStore {
+   /** Apply a change and persist it atomically (write temp file, then rename over the original). */
+   update(change: (c: Config) => Config): Config {
+     const next = sanitizeConfig(change(structuredClone(this.config)));
++    for (const list of ['manual', 'favourites', 'hidden', 'overrides'] as const) {
++      if (next[list].length > MAX_ITEMS && next[list].length > this.config[list].length) {
++        throw new ConfigFullError(`Can't save more than ${MAX_ITEMS} ${list} entries; remove some first`);
++      }
++    }
+     mkdirSync(path.dirname(this.file), { recursive: true });
+     const tmp = `${this.file}.${process.pid}.tmp`;
+     writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+diff --git a/server/discovery.test.ts b/server/discovery.test.ts
+index 009ae15..6d7bf86 100644
+--- a/server/discovery.test.ts
++++ b/server/discovery.test.ts
+@@ -1,12 +1,29 @@
+ import assert from 'node:assert/strict';
++import { execFileSync } from 'node:child_process';
++import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+ import http from 'node:http';
++import https from 'node:https';
+ import net from 'node:net';
++import path from 'node:path';
+ import { after, describe, it } from 'node:test';
++import type { Env } from '../shared/types.ts';
++import type { Listener } from './discovery/listener.ts';
+ import { parsePosixOutput, parseSsAddress } from './discovery/posix.ts';
+-import { parseNetstatOutput, parsePowerShellOutput, parseTasklist } from './discovery/windows.ts';
+-import { looksLikeProjectDir, projectDirFromCommandLine, toLocalPath } from './identify.ts';
++import { run } from './discovery/run.ts';
++import { discoverWindows, parseNetstatOutput, parsePowerShellOutput, parseTasklist } from './discovery/windows.ts';
++import { identify, looksLikeProjectDir, projectDirFromCommandLine, toLocalPath } from './identify.ts';
+ import { classify, extractTitle, isLoopbackHost, probe } from './probe.ts';
+-import { parseManual, parseOverride, safeFolder, safeUrl, sanitizeConfig } from './config.ts';
++import { collectSources, dropRelayDuplicates, probeListener } from './scan.ts';
++import { ConfigFullError, ConfigStore, MAX_ITEMS, parseManual, parseOverride, safeFolder, safeUrl, sanitizeConfig } from './config.ts';
++
++const LOCAL_ENV: Env = process.platform === 'win32' ? 'windows' : 'linux';
++
++/** A scratch folder inside the repo: OS temp dirs (e.g. Windows AppData) are not project folders. */
++function scratchDir(): string {
++  const dir = mkdtempSync(path.join(import.meta.dirname, '..', '.test-scratch-'));
++  after(() => rmSync(dir, { recursive: true, force: true }));
++  return dir;
++}
+ 
+ describe('ss parsing', () => {
+   it('parses address forms', () => {
+@@ -203,3 +220,213 @@ describe('overrides and folders', () => {
+     assert.deepEqual(c.overrides, [{ key: 'a', name: 'A' }]);
+   });
+ });
++
++describe('identify on real folders', () => {
++  const listener = (l: Partial<Listener>): Listener => ({ env: LOCAL_ENV, port: 5000, addresses: ['127.0.0.1'], ...l });
++  const ctx = { host: LOCAL_ENV };
++
++  it('ignores a folder that does not exist (packaged-app virtual paths)', async () => {
++    const missing = path.join(scratchDir(), 'snapshot', 'bundle');
++    assert.deepEqual(await identify(listener({ cwd: missing }), ctx), {});
++    assert.deepEqual(await identify(listener({ commandLine: `node ${path.join(missing, 'app.js')}` }), ctx), {});
++  });
++
++  it('still identifies an existing project folder', async () => {
++    const dir = scratchDir();
++    writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'real-app' }));
++    mkdirSync(path.join(dir, 'src'));
++    const id = await identify(listener({ cwd: path.join(dir, 'src') }), ctx);
++    assert.deepEqual(id, { projectDir: dir, projectDirSource: 'cwd', packageName: 'real-app' });
++  });
++});
++
++describe('probe body cap', () => {
++  const servers: http.Server[] = [];
++  after(() => servers.forEach((s) => s.close()));
++
++  /** Serve HTML in two writes, so the title arrives in a separate chunk after `head`. */
++  const serve = (head: string, tail: string) =>
++    new Promise<number>((resolve) => {
++      const s = http.createServer((_q, r) => {
++        r.writeHead(200, { 'content-type': 'text/html' });
++        r.write(head);
++        setTimeout(() => r.end(tail), 30);
++      });
++      servers.push(s);
++      s.listen(0, '127.0.0.1', () => resolve((s.address() as net.AddressInfo).port));
++    });
++
++  const LIMIT = 64 * 1024;
++  const pad = (n: number) => 'x'.repeat(n);
++
++  for (const offset of [LIMIT - 1, LIMIT, LIMIT + 1, 100_000]) {
++    it(`ignores a title starting at byte ${offset}`, async () => {
++      const port = await serve(pad(65530), pad(offset - 65530) + '<title>BEYOND-CAP</title>');
++      const p = await probe({ host: '127.0.0.1', port });
++      assert.equal(p.kind, 'web');
++      assert.equal(p.title, undefined);
++    });
++  }
++
++  it('reads a title that ends exactly at the cap', async () => {
++    const title = '<title>INSIDE</title>';
++    const port = await serve(pad(60000), pad(LIMIT - 60000 - title.length) + title + pad(1000));
++    assert.equal((await probe({ host: '127.0.0.1', port })).title, 'INSIDE');
++  });
++
++  it('ignores a title past the cap inside one large chunk', async () => {
++    const port = await serve(pad(LIMIT) + '<title>ONE-CHUNK</title>', '');
++    assert.equal((await probe({ host: '127.0.0.1', port })).title, undefined);
++  });
++
++  it('settles on a truncated response instead of waiting for the timeout', async () => {
++    const s = http.createServer((_q, r) => {
++      r.writeHead(200, { 'content-type': 'text/html', 'content-length': '5000' });
++      r.write('<html><head>');
++      setTimeout(() => r.socket?.destroy(), 30);
++    });
++    servers.push(s);
++    const port = await new Promise<number>((resolve) => s.listen(0, '127.0.0.1', () => resolve((s.address() as net.AddressInfo).port)));
++    const p = await probe({ host: '127.0.0.1', port, timeoutMs: 2000 });
++    assert.equal(p.kind, 'web');
++    assert.ok((p.ms ?? Infinity) < 1000, `took ${p.ms} ms`);
++  });
++});
++
++describe('TLS retry', () => {
++  // Needs openssl to mint a throwaway self-signed certificate; skipped where it is missing.
++  let tls: { key: string; cert: string } | undefined;
++  try {
++    const dir = mkdtempSync(path.join(import.meta.dirname, '..', '.test-scratch-'));
++    try {
++      execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
++        '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem')], { stdio: 'ignore' });
++      tls = { key: readFileSync(path.join(dir, 'k.pem'), 'utf8'), cert: readFileSync(path.join(dir, 'c.pem'), 'utf8') };
++    } finally {
++      rmSync(dir, { recursive: true, force: true });
++    }
++  } catch {
++    tls = undefined;
++  }
++  const servers: https.Server[] = [];
++  after(() => servers.forEach((s) => s.close()));
++  const listen = (handler: http.RequestListener) =>
++    new Promise<number>((resolve) => {
++      const s = https.createServer(tls!, handler);
++      servers.push(s);
++      s.listen(0, '127.0.0.1', () => resolve((s.address() as net.AddressInfo).port));
++    });
++  const listener = (port: number): Listener => ({ env: LOCAL_ENV, port, addresses: ['127.0.0.1'] });
++
++  it('retries a TLS dev server over HTTPS', { skip: !tls && 'openssl not available' }, async () => {
++    const port = await listen((_q, r) => r.writeHead(200, { 'content-type': 'text/html' }).end('<title>Secure</title>'));
++    const { probe: p, protocol } = await probeListener(listener(port), LOCAL_ENV, undefined);
++    assert.equal(protocol, 'https:');
++    assert.equal(p.kind, 'web');
++    assert.equal(p.title, 'Secure');
++  });
++
++  it('keeps the plain result when the HTTPS retry is truncated', { skip: !tls && 'openssl not available' }, async () => {
++    const port = await listen((_q, r) => r.socket?.destroy());
++    const { probe: p, protocol } = await probeListener(listener(port), LOCAL_ENV, undefined);
++    assert.equal(protocol, 'http:');
++    assert.equal(p.kind, 'tcp');
++  });
++});
++
++describe('source orchestration', () => {
++  const l = (env: Env, port: number, processName?: string): Listener => ({ env, port, addresses: ['127.0.0.1'], processName });
++  const ok = (env: Env, listeners: Listener[]) => ({ env, method: 'fake', discover: async () => ({ listeners, method: 'fake', notes: [] }) });
++  const failing = (env: Env, message: string) => ({ env, method: 'fake', discover: async () => Promise.reject(new Error(message)) });
++
++  it('reports a failed source and keeps the others', async () => {
++    for (const message of ['powershell.exe timed out', 'wsl.exe not found', 'Unexpected end of JSON input']) {
++      const r = await collectSources([failing('windows', message), ok('wsl', [l('wsl', 5173)])]);
++      assert.deepEqual(r.listeners.map((x) => x.port), [5173]);
++      assert.deepEqual(r.sources.map((s) => [s.env, s.ok, s.error]), [['windows', false, message], ['wsl', true, undefined]]);
++    }
++  });
++
++  it('turns malformed tool output into no listeners, not an error', () => {
++    assert.deepEqual(parsePosixOutput('garbage\n\0\nLISTEN nonsense', 'wsl').listeners, []);
++    assert.throws(() => parsePowerShellOutput('{"listeners": [oops'));
++    assert.deepEqual(parseNetstatOutput('Active Connections\n  TCP junk', new Map()), []);
++  });
++
++  it('falls back to netstat when PowerShell fails', async () => {
++    const calls: string[] = [];
++    const exec: typeof run = async (file) => {
++      calls.push(path.basename(file));
++      if (/powershell/i.test(file)) throw new Error('powershell.exe timed out');
++      if (/tasklist/i.test(file)) return { stdout: '"node.exe","4242","Console","1","50,000 K"\n', stderr: '' };
++      return { stdout: '  TCP    127.0.0.1:5300         0.0.0.0:0              LISTENING       4242\n', stderr: '' };
++    };
++    const out = await discoverWindows(exec);
++    assert.equal(out.method, 'netstat.exe + tasklist.exe');
++    assert.match(out.notes[0], /PowerShell discovery failed \(powershell.exe timed out\); fell back to netstat/);
++    assert.deepEqual(out.listeners.map((x) => [x.port, x.pid, x.processName]), [[5300, 4242, 'node.exe']]);
++    assert.ok(calls.some((c) => /netstat/i.test(c)));
++  });
++
++  it('turns a hung or missing tool into an error message', async () => {
++    await assert.rejects(run(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { timeoutMs: 200 }), /timed out/);
++    await assert.rejects(run('the-shed-no-such-tool', []), /the-shed-no-such-tool not found/);
++  });
++
++  it('shows a WSL port once when wslrelay re-listens on Windows', () => {
++    const merged = dropRelayDuplicates([l('wsl', 5173, 'node'), l('windows', 5173, 'wslrelay.exe'), l('windows', 8080, 'wslrelay.exe'), l('windows', 3000, 'node.exe'), l('wsl', 3000, 'node')]);
++    assert.deepEqual(merged.map((x) => `${x.env}:${x.port}:${x.processName}`), ['wsl:5173:node', 'windows:8080:wslrelay.exe', 'windows:3000:node.exe', 'wsl:3000:node']);
++  });
++});
++
++describe('preference capacity', () => {
++  const entries = {
++    manual: (i: number) => ({ id: `m${i}`, name: `m${i}`, url: `http://localhost:${1000 + i}` }),
++    favourites: (i: number) => ({ key: `port:wsl:${i}`, name: `f${i}`, url: `http://localhost:${1000 + i}` }),
++    hidden: (i: number) => ({ id: `h${i}`, kind: 'port', env: 'wsl', port: 1000 + i }),
++    overrides: (i: number) => ({ key: `port:wsl:${i}`, name: `o${i}` }),
++  };
++  const lists = Object.keys(entries) as (keyof typeof entries)[];
++
++  const storeWith = (counts: Partial<Record<keyof typeof entries, number>>, extra: Record<string, unknown[]> = {}) => {
++    const file = path.join(scratchDir(), 'config.json');
++    const raw: Record<string, unknown[]> = {};
++    for (const list of lists) raw[list] = [...Array.from({ length: counts[list] ?? 0 }, (_, i) => entries[list](i)), ...(extra[list] ?? [])];
++    writeFileSync(file, JSON.stringify(raw));
++    return { file, store: new ConfigStore(file) };
++  };
++
++  for (const list of lists) {
++    it(`${list}: adds up to ${MAX_ITEMS}, rejects the next without losing anything`, () => {
++      const { file, store } = storeWith({ [list]: MAX_ITEMS - 1 });
++      const add = (i: number) => store.update((c) => ({ ...c, [list]: [...c[list], entries[list](i)] }));
++      assert.equal(add(MAX_ITEMS - 1)[list].length, MAX_ITEMS);
++      const before = readFileSync(file, 'utf8');
++      assert.throws(() => add(MAX_ITEMS), ConfigFullError);
++      assert.equal(store.get()[list].length, MAX_ITEMS);
++      assert.equal(readFileSync(file, 'utf8'), before, 'file untouched by the rejected write');
++      assert.equal(new ConfigStore(file).get()[list].length, MAX_ITEMS, 'survives restart');
++    });
++
++    it(`${list}: keeps ${MAX_ITEMS + 1} valid saved entries and still drops malformed ones`, () => {
++      const { file, store } = storeWith({ [list]: MAX_ITEMS + 1 }, { [list]: ['junk', { bad: true }] });
++      assert.equal(store.get()[list].length, MAX_ITEMS + 1);
++      // Changes that don't grow the list still save.
++      store.update((c) => ({ ...c, [list]: c[list].slice(1) }));
++      assert.equal(new ConfigStore(file).get()[list].length, MAX_ITEMS);
++    });
++  }
++
++  it('leaves the saved file and memory unchanged when the write fails', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {
++    const { file, store } = storeWith({ manual: 1 });
++    const before = readFileSync(file, 'utf8');
++    chmodSync(path.dirname(file), 0o500);
++    try {
++      assert.throws(() => store.update((c) => ({ ...c, manual: [...c.manual, entries.manual(1)] })));
++    } finally {
++      chmodSync(path.dirname(file), 0o700);
++    }
++    assert.equal(store.get().manual.length, 1);
++    assert.equal(readFileSync(file, 'utf8'), before);
++  });
++});
+diff --git a/server/discovery/windows.ts b/server/discovery/windows.ts
+index 86ad440..3e0c04f 100644
+--- a/server/discovery/windows.ts
++++ b/server/discovery/windows.ts
+@@ -96,10 +96,11 @@ export function parseTasklist(stdout: string): Map<number, string> {
+   return names;
+ }
+ 
+-export async function discoverWindows(): Promise<SourceOutput> {
++/** `exec` is swappable so tests can force the PowerShell failure → netstat fallback path. */
++export async function discoverWindows(exec: typeof run = run): Promise<SourceOutput> {
+   const notes: string[] = [];
+   try {
+-    const { stdout } = await run(
++    const { stdout } = await exec(
+       exe('powershell.exe'),
+       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', ENCODED_SCRIPT],
+       { cwd, timeoutMs: 20_000 },
+@@ -114,10 +115,10 @@ export async function discoverWindows(): Promise<SourceOutput> {
+   }
+ 
+   const [netstat, tasklist] = await Promise.all([
+-    run(exe('netstat.exe'), ['-ano', '-p', 'TCP'], { cwd }).then((r) => r.stdout),
+-    run(exe('tasklist.exe'), ['/fo', 'csv', '/nh'], { cwd }).then((r) => r.stdout).catch(() => ''),
++    exec(exe('netstat.exe'), ['-ano', '-p', 'TCP'], { cwd }).then((r) => r.stdout),
++    exec(exe('tasklist.exe'), ['/fo', 'csv', '/nh'], { cwd }).then((r) => r.stdout).catch(() => ''),
+   ]);
+-  const v6 = await run(exe('netstat.exe'), ['-ano', '-p', 'TCPv6'], { cwd }).then((r) => r.stdout).catch(() => '');
++  const v6 = await exec(exe('netstat.exe'), ['-ano', '-p', 'TCPv6'], { cwd }).then((r) => r.stdout).catch(() => '');
+   const names = parseTasklist(tasklist);
+   const listeners = parseNetstatOutput(`${netstat}\n${v6.replace(/TCPv6/g, 'TCP')}`, names);
+   notes.push('netstat gives no command lines, so project names cannot be inferred.');
+diff --git a/server/index.ts b/server/index.ts
+index bebcda7..3300d47 100644
+--- a/server/index.ts
++++ b/server/index.ts
+@@ -3,7 +3,7 @@ import http from 'node:http';
+ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import type { Config, State } from '../shared/types.ts';
+-import { ConfigStore, parseFavourite, parseHideRule, parseManual, parseOverride, safeFolder } from './config.ts';
++import { ConfigFullError, ConfigStore, parseFavourite, parseHideRule, parseManual, parseOverride, safeFolder } from './config.ts';
+ import { Scanner } from './scan.ts';
+ 
+ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+@@ -142,6 +142,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
+   }
+ 
+   if (method === 'DELETE' && idMatch?.[1] === 'manual') {
++    await readJson(req); // body is `{}`; reading it enforces the JSON content type like other mutations
+     store.update((c) => ({
+       ...c,
+       manual: c.manual.filter((m) => m.id !== idMatch[2]),
+@@ -170,6 +171,7 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
+   }
+ 
+   if (method === 'DELETE' && idMatch?.[1] === 'hidden') {
++    await readJson(req);
+     store.update((c) => ({ ...c, hidden: c.hidden.filter((h) => h.id !== idMatch[2]) }));
+     return send(res, 200, await state());
+   }
+@@ -222,7 +224,7 @@ const server = http.createServer(async (req, res) => {
+     if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Method not allowed');
+     serveStatic(res, url.pathname);
+   } catch (err) {
+-    const status = err instanceof HttpError ? err.status : 500;
++    const status = err instanceof HttpError ? err.status : err instanceof ConfigFullError ? 409 : 500;
+     if (status === 500) console.error('[shed]', err);
+     if (!res.headersSent) send(res, status, { error: status === 500 ? 'Internal error' : (err as Error).message });
+     else res.end();
+diff --git a/server/probe.ts b/server/probe.ts
+index 64d8427..c416fd9 100644
+--- a/server/probe.ts
++++ b/server/probe.ts
+@@ -104,9 +104,11 @@ export function probe(target: ProbeTarget): Promise<Probe> {
+         finish({ kind, status, contentType: contentType || undefined, title: kind === 'web' ? extractTitle(body) : undefined });
+       };
+       res.on('data', (chunk: Buffer) => {
+-        chunks.push(chunk);
+-        size += chunk.length;
+-        if (size >= MAX_BODY || /<\/title>/i.test(chunk.toString('latin1'))) settle();
++        // A chunk can straddle the cap; keep only the bytes inside it.
++        const kept = chunk.subarray(0, MAX_BODY - size);
++        chunks.push(kept);
++        size += kept.length;
++        if (size >= MAX_BODY || /<\/title>/i.test(kept.toString('latin1'))) settle();
+       });
+       res.on('end', settle);
+       res.on('error', settle);
+diff --git a/server/scan.ts b/server/scan.ts
+index 2456f42..b035edc 100644
+--- a/server/scan.ts
++++ b/server/scan.ts
+@@ -37,7 +37,7 @@ async function detectNetworkingMode(host: Env): Promise<string | undefined> {
+   return undefined;
+ }
+ 
+-interface Source {
++export interface Source {
+   env: Env;
+   method: string;
+   discover: () => Promise<SourceOutput>;
+@@ -46,14 +46,14 @@ interface Source {
+ function sourcesFor(host: Env): Source[] {
+   if (host === 'windows') {
+     return [
+-      { env: 'windows', method: 'PowerShell', discover: discoverWindows },
++      { env: 'windows', method: 'PowerShell', discover: () => discoverWindows() },
+       { env: 'wsl', method: 'wsl.exe', discover: discoverWslFromWindows },
+     ];
+   }
+   if (host === 'wsl') {
+     return [
+       { env: 'wsl', method: 'ss + /proc', discover: () => discoverPosixLocal('wsl') },
+-      { env: 'windows', method: 'PowerShell (interop)', discover: discoverWindows },
++      { env: 'windows', method: 'PowerShell (interop)', discover: () => discoverWindows() },
+     ];
+   }
+   return [{ env: 'linux', method: 'ss + /proc', discover: () => discoverPosixLocal('linux') }];
+@@ -84,7 +84,7 @@ function displayName(l: Listener, packageName?: string, projectDir?: string, tit
+   return { name: `Port ${l.port}`, nameSource: 'port' };
+ }
+ 
+-async function probeListener(l: Listener, host: Env, mode: string | undefined): Promise<{ probe: Probe; protocol: string }> {
++export async function probeListener(l: Listener, host: Env, mode: string | undefined): Promise<{ probe: Probe; protocol: string }> {
+   const target = { host: probeHost(l, host), port: l.port };
+   let result = await probe(target);
+   let protocol = 'http:';
+@@ -126,17 +126,10 @@ async function probeManual(config: Config): Promise<ManualStatus[]> {
+   });
+ }
+ 
+-export interface ScanOptions {
+-  serverPort: number;
+-}
+-
+-export async function scan(config: Config, opts: ScanOptions): Promise<ScanResult> {
+-  const started = Date.now();
+-  const host = detectHost();
+-  const modePromise = detectNetworkingMode(host);
+-
++/** Run every source; one that throws becomes a failed report while the others still count (DISC-01). */
++export async function collectSources(list: Source[]): Promise<{ sources: SourceReport[]; listeners: Listener[]; distro?: string }> {
+   const outputs = await Promise.all(
+-    sourcesFor(host).map(async (src) => {
++    list.map(async (src) => {
+       const t0 = Date.now();
+       try {
+         const out = await src.discover();
+@@ -146,10 +139,8 @@ export async function scan(config: Config, opts: ScanOptions): Promise<ScanResul
+       }
+     }),
+   );
+-  const mode = await modePromise;
+-
+   const sources: SourceReport[] = [];
+-  let listeners: Listener[] = [];
++  const listeners: Listener[] = [];
+   let distro: string | undefined;
+   for (const o of outputs) {
+     if ('error' in o) {
+@@ -160,10 +151,28 @@ export async function scan(config: Config, opts: ScanOptions): Promise<ScanResul
+     listeners.push(...o.out.listeners);
+     sources.push({ env: o.src.env, ok: true, method: o.out.method, count: o.out.listeners.length, ms: o.ms, notes: o.out.notes });
+   }
++  return { sources, listeners, distro };
++}
+ 
+-  // In WSL NAT mode, wslrelay.exe re-listens on Windows for each forwarded WSL port. Show it once.
++/** In WSL NAT mode, wslrelay.exe re-listens on Windows for each forwarded WSL port. Show it once. */
++export function dropRelayDuplicates(listeners: Listener[]): Listener[] {
+   const wslPorts = new Set(listeners.filter((l) => l.env === 'wsl').map((l) => l.port));
+-  listeners = listeners.filter((l) => !(l.env === 'windows' && /^wslrelay/i.test(l.processName ?? '') && wslPorts.has(l.port)));
++  return listeners.filter((l) => !(l.env === 'windows' && /^wslrelay/i.test(l.processName ?? '') && wslPorts.has(l.port)));
++}
++
++export interface ScanOptions {
++  serverPort: number;
++}
++
++export async function scan(config: Config, opts: ScanOptions): Promise<ScanResult> {
++  const started = Date.now();
++  const host = detectHost();
++  const modePromise = detectNetworkingMode(host);
++
++  const collected = await collectSources(sourcesFor(host));
++  const mode = await modePromise;
++  const { sources, distro } = collected;
++  const listeners = dropRelayDuplicates(collected.listeners);
+ 
+   const ctx: HostContext = { host, distro };
+   const services = await mapLimit(listeners, 16, async (l): Promise<Service> => {

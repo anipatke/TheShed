@@ -96,10 +96,11 @@ export function parseTasklist(stdout: string): Map<number, string> {
   return names;
 }
 
-export async function discoverWindows(): Promise<SourceOutput> {
+/** `exec` is swappable so tests can force the PowerShell failure → netstat fallback path. */
+export async function discoverWindows(exec: typeof run = run): Promise<SourceOutput> {
   const notes: string[] = [];
   try {
-    const { stdout } = await run(
+    const { stdout } = await exec(
       exe('powershell.exe'),
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', ENCODED_SCRIPT],
       { cwd, timeoutMs: 20_000 },
@@ -114,10 +115,10 @@ export async function discoverWindows(): Promise<SourceOutput> {
   }
 
   const [netstat, tasklist] = await Promise.all([
-    run(exe('netstat.exe'), ['-ano', '-p', 'TCP'], { cwd }).then((r) => r.stdout),
-    run(exe('tasklist.exe'), ['/fo', 'csv', '/nh'], { cwd }).then((r) => r.stdout).catch(() => ''),
+    exec(exe('netstat.exe'), ['-ano', '-p', 'TCP'], { cwd }).then((r) => r.stdout),
+    exec(exe('tasklist.exe'), ['/fo', 'csv', '/nh'], { cwd }).then((r) => r.stdout).catch(() => ''),
   ]);
-  const v6 = await run(exe('netstat.exe'), ['-ano', '-p', 'TCPv6'], { cwd }).then((r) => r.stdout).catch(() => '');
+  const v6 = await exec(exe('netstat.exe'), ['-ano', '-p', 'TCPv6'], { cwd }).then((r) => r.stdout).catch(() => '');
   const names = parseTasklist(tasklist);
   const listeners = parseNetstatOutput(`${netstat}\n${v6.replace(/TCPv6/g, 'TCP')}`, names);
   notes.push('netstat gives no command lines, so project names cannot be inferred.');

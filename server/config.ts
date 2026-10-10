@@ -4,7 +4,11 @@ import path from 'node:path';
 import type { Config, Env, Favourite, HideRule, ManualProject, Override } from '../shared/types.ts';
 
 const ENVS: Env[] = ['windows', 'wsl', 'linux'];
-const MAX_ITEMS = 500;
+/** Additions stop at this many entries per list. Entries already saved are never dropped for count. */
+export const MAX_ITEMS = 500;
+
+/** A change would grow a list past MAX_ITEMS. Nothing was written. */
+export class ConfigFullError extends Error {}
 
 export const emptyConfig = (): Config => ({ version: 1, manual: [], favourites: [], hidden: [], overrides: [] });
 
@@ -89,7 +93,7 @@ export function parseHideRule(v: unknown, id?: string): HideRule | undefined {
 export function sanitizeConfig(raw: unknown): Config {
   const o = (raw ?? {}) as Record<string, unknown>;
   const list = <T>(v: unknown, parse: (x: unknown) => T | undefined): T[] =>
-    (Array.isArray(v) ? v : []).slice(0, MAX_ITEMS).map((x) => parse(x)).filter((x): x is T => x !== undefined);
+    (Array.isArray(v) ? v : []).map((x) => parse(x)).filter((x): x is T => x !== undefined);
   return {
     version: 1,
     manual: list(o.manual, (x) => parseManual(x)),
@@ -137,6 +141,11 @@ export class ConfigStore {
   /** Apply a change and persist it atomically (write temp file, then rename over the original). */
   update(change: (c: Config) => Config): Config {
     const next = sanitizeConfig(change(structuredClone(this.config)));
+    for (const list of ['manual', 'favourites', 'hidden', 'overrides'] as const) {
+      if (next[list].length > MAX_ITEMS && next[list].length > this.config[list].length) {
+        throw new ConfigFullError(`Can't save more than ${MAX_ITEMS} ${list} entries; remove some first`);
+      }
+    }
     mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');

@@ -1,0 +1,23 @@
+# C-002 recheck admission ledger
+
+Frozen scope: C-001's numbered lock, concrete coverage table, finite external-boundary table and workflow inventory. No new axes or dependency layers admitted. This checker did not build or repair the implementation; executor session remains session_01WG6Lxf82CULEbTwEk9Keqb. Independent of repair conversation; same checker as C-001 permitted.
+
+| Recheck item | Prior Issue / claim | Exact original frozen cell | Allowed result |
+|---|---|---|---|
+| original P1/P2/P3 fixtures | C-001 passing P cells; I-005 identity regression | P ss empty/invalid/ports 0–128/edges; duplicate env+port/mutable address; cwd/marker/nonexistent/corrupt package | pass or existing I-005 in-scope failure |
+| original V1/V2 shapes/limits/roundtrip/disk failure | C-001 passing V cells | V validator shapes/name/folder/key/port limits; V corrupt/backup/restart/before-write/write/rename | pass or in-scope failure |
+| 499/500/501 for all config lists, API and restart | I-003 capacity repair | V list 499/500/501; I-003 Proof Needed manual/favourite/hidden/override; A persistence | close I-003 or still open |
+| original status/title/socket/concurrency fixtures | C-001 passing N cells | N 200/302/401/403/404/503/no-follow; N text classes/title cap; N refused/silent/reset/banner; N mapLimit order/empty | pass or in-scope failure |
+| original body-cap four reproductions and inside-cap neighbour | I-004 byte trimming | N body 65535/65536/65537/100000 and I-004 same cap adjacent cells | close I-004 or still open |
+| normal API and all DELETE guard variants | I-002 guards + client format repair | A API routes/Host/Origin/content-type/body-limit/static; A DELETE absent/nonJSON bypass; I-002 both routes/rejection preservation/JSON {} | close I-002 or still open |
+| real both-host mirrored discovery/cache/concurrent refresh | C-001 passing D/A; TEST-03 repair evidence | D actual/configured host/target and source warnings; A restart/cache/force/concurrent refresh | pass or in-scope failure |
+| source missing/timeout/malformed/fallback/relay tests and direct alternative fixture | I-005 exported helper/runner repair | P/D relay overlap; D source refusal/unavailable/missing-tool/timeout/fallback/malformed orchestration | close I-005 cells or still unverified |
+| TLS retry/truncation/response cancellation | I-005 new network tests | N controlled TLS retry/truncated response/cancellation; external retry/cleanup | close I-005 cells or still unverified |
+| concurrent manual mutation while scan is inflight | I-005 explicitly unverified repair claim | A concurrent mutation vs scan; workflow step 6; sequence next refresh reconciles persisted state | close I-005 cell or still unverified/failure |
+| exception after committed preferences before API response | I-005 explicitly unverified repair claim | A failure after committed config before state response; workflow step 6 failure owner and durable state | close I-005 cell or still unverified/failure |
+| row/API/Other rename/folder/star/hide/unhide/offline/website + failed edit/add saves and retry | I-001 and I-005 UI repair | U API/Other curation; U kind/status/hide/favourite/offline; U manual/error-retaining forms; I-001/I-005 Proof Needed | close I-001/I-005 or still open |
+| source/CSS/API/Design/docs/evidence verification + gates and health | C-001 E; all repair claims | E file reality/named tests/per-fix evidence/Design/gates; all unchanged N/A classifications | pass or in-scope failure/unverified |
+
+Executor logs/screenshots are claims to independently validate. Historical add-form pre-fix source is unavailable; the frozen I-005 Proof Needed asks for a recorded failed-save/retry scenario retaining form/fields. Do not add a requirement to reconstruct historical source to that proof contract.
+
+No autonomous implementation remediation is allowed in this Check. Every original cell must be classified before verdict. Previously N/A cells remain N/A for the same reasons. New issues outside these exact cells are observations only unless a credible blocker exception applies.

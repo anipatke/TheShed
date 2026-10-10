@@ -1,0 +1,432 @@
+{
+  "at": "2026-10-10T03:34:42.523Z",
+  "node": "v22.22.2",
+  "temp": "/tmp/shed-c002-XMiZoq",
+  "results": [
+    {
+      "id": "P1 parser port full-small-range + edges",
+      "result": "pass",
+      "actual": "empty/invalid/boundaries passed"
+    },
+    {
+      "id": "P2 merge duplicate/environment/mutation",
+      "result": "pass"
+    },
+    {
+      "id": "P3 identity missing path/marker/package",
+      "result": "pass"
+    },
+    {
+      "id": "V1 validator shapes/limits/roundtrip",
+      "result": "pass"
+    },
+    {
+      "id": "V2 corrupt backup/restart/write and rename failure",
+      "result": "pass",
+      "actual": "old state preserved; rename-failure temp remains (observation)"
+    },
+    {
+      "id": "V3 item limit 499/500/501",
+      "result": "pass"
+    },
+    {
+      "id": "N status 200",
+      "result": "pass",
+      "actual": {
+        "kind": "http",
+        "status": 200,
+        "contentType": "application/json",
+        "ms": 6
+      }
+    },
+    {
+      "id": "N status 302",
+      "result": "pass",
+      "actual": {
+        "kind": "web",
+        "status": 302,
+        "contentType": "text/html",
+        "title": "hello",
+        "ms": 1
+      }
+    },
+    {
+      "id": "N status 401",
+      "result": "pass",
+      "actual": {
+        "kind": "web",
+        "status": 401,
+        "contentType": "text/html",
+        "title": "hello",
+        "ms": 2
+      }
+    },
+    {
+      "id": "N status 403",
+      "result": "pass",
+      "actual": {
+        "kind": "web",
+        "status": 403,
+        "contentType": "text/html",
+        "title": "hello",
+        "ms": 1
+      }
+    },
+    {
+      "id": "N status 404",
+      "result": "pass",
+      "actual": {
+        "kind": "http",
+        "status": 404,
+        "contentType": "text/html",
+        "ms": 2
+      }
+    },
+    {
+      "id": "N status 503",
+      "result": "pass",
+      "actual": {
+        "kind": "http",
+        "status": 503,
+        "contentType": "text/html",
+        "ms": 1
+      }
+    },
+    {
+      "id": "N title text classes and cap",
+      "result": "pass"
+    },
+    {
+      "id": "N body cap 65535",
+      "result": "pass",
+      "actual": {
+        "kind": "web",
+        "status": 200,
+        "contentType": "text/html",
+        "ms": 32
+      }
+    },
+    {
+      "id": "N body cap 65536",
+      "result": "pass",
+      "actual": {
+        "kind": "web",
+        "status": 200,
+        "contentType": "text/html",
+        "ms": 31
+      }
+    },
+    {
+      "id": "N body cap 65537",
+      "result": "pass",
+      "actual": {
+        "kind": "web",
+        "status": 200,
+        "contentType": "text/html",
+        "ms": 32
+      }
+    },
+    {
+      "id": "N body cap 100000",
+      "result": "pass",
+      "actual": {
+        "kind": "web",
+        "status": 200,
+        "contentType": "text/html",
+        "ms": 31
+      }
+    },
+    {
+      "id": "N silent/banner/reset/refusal/cleanup",
+      "result": "pass"
+    },
+    {
+      "id": "N mapLimit concurrency/order/empty",
+      "result": "pass"
+    },
+    {
+      "id": "A Host/Origin/JSON/body-limit/static guard matrix",
+      "result": "pass",
+      "actual": "guards passed; invalid static encoding returns controlled 500"
+    },
+    {
+      "id": "A normal manual/override/star/hide/unhide/edit/delete workflow",
+      "result": "pass"
+    },
+    {
+      "id": "A malformed request null favourites",
+      "result": "pass"
+    },
+    {
+      "id": "A DELETE content-type bypass",
+      "result": "pass"
+    },
+    {
+      "id": "A restart persistence",
+      "result": "pass"
+    },
+    {
+      "id": "D real mirrored WSL host/cache/concurrent refresh",
+      "result": "pass",
+      "actual": {
+        "host": {
+          "env": "wsl",
+          "networkingMode": "mirrored"
+        },
+        "sources": [
+          {
+            "env": "wsl",
+            "ok": true,
+            "count": 34,
+            "method": "ss + /proc"
+          },
+          {
+            "env": "windows",
+            "ok": true,
+            "count": 34,
+            "method": "PowerShell Get-NetTCPConnection"
+          }
+        ],
+        "sample": [
+          {
+            "env": "wsl",
+            "port": 3000,
+            "name": "main-portfolio",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5173,
+            "name": "andromeda",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5174,
+            "name": "sea-level",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5175,
+            "name": "astraeus-earth-moon-spike",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5199,
+            "name": "astraeus-earth-moon-spike",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 57082,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 57104,
+            "name": "Microsoft VS Code",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57180,
+            "name": "astraeus-earth-moon-spike",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57226,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 57462,
+            "name": "main-portfolio",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57498,
+            "name": "Microsoft VS Code",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57510,
+            "name": "sea-level",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57512,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 57620,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 57700,
+            "name": "argus",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57770,
+            "name": "deep-time-globe",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57810,
+            "name": "main-portfolio",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57928,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58004,
+            "name": "astraeus-earth-moon-spike",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58010,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58076,
+            "name": "the-shed",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58272,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58274,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58300,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58302,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58392,
+            "name": "argus",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58394,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58462,
+            "name": "deep-time-globe",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58726,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58774,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 58788,
+            "name": "sea-level",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58822,
+            "name": "deep-time-globe",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58840,
+            "name": "the-shed",
+            "kind": "web"
+          },
+          {
+            "env": "windows",
+            "port": 63243,
+            "name": "Riot Client",
+            "kind": "tcp"
+          }
+        ]
+      }
+    },
+    {
+      "id": "D real Windows host with same config",
+      "result": "pass",
+      "actual": {
+        "host": {
+          "env": "windows",
+          "networkingMode": "mirrored"
+        },
+        "sources": [
+          {
+            "env": "windows",
+            "ok": true,
+            "count": 35,
+            "method": "PowerShell Get-NetTCPConnection"
+          },
+          {
+            "env": "wsl",
+            "ok": true,
+            "count": 34,
+            "method": "wsl.exe → ss + /proc"
+          }
+        ]
+      }
+    },
+    {
+      "id": "U model all kinds/status/hide/star/offline/filter/safe links",
+      "result": "pass"
+    },
+    {
+      "id": "U API/Other row curation reachability",
+      "result": "pass"
+    }
+  ],
+  "serverLog": "[shed] The Shed is running at http://localhost:58300  (bound to 127.0.0.1 only)\n[shed] Config: /tmp/shed-c002-XMiZoq/api.json\n"
+}

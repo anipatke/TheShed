@@ -91,7 +91,7 @@ The Shed lists processes on your machine, so the server is locked down even thou
 
 - Listens on `127.0.0.1` only (the address is hard-coded).
 - Rejects any request whose `Host` isn't `localhost`/`127.0.0.1`/`[::1]`, which blocks DNS-rebinding attacks from web pages.
-- Mutations require `Content-Type: application/json` and a localhost `Origin` (or none), so other sites can't post to it.
+- Mutations, including `DELETE` (body `{}`), require `Content-Type: application/json` and a localhost `Origin` (or none), so other sites can't post to it.
 - The frontend can't make the server run anything. Discovery runs constant scripts through `execFile` (no shell interpolation), and no request data or service data ever reaches a command.
 - **Discovered services are untrusted**. Titles are reduced to plain text (tags, control and bidi characters stripped, capped at 120 chars) and rendered as text. Open links are built by the server from the port number, never taken from a service. `package.json` reads are size-capped and type-checked.
 - Manual project URLs must be `http(s)`. Only loopback URLs are probed, so the server can't be used as a proxy to other hosts.

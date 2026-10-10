@@ -1,12 +1,29 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
+import path from 'node:path';
 import { after, describe, it } from 'node:test';
+import type { Env } from '../shared/types.ts';
+import type { Listener } from './discovery/listener.ts';
 import { parsePosixOutput, parseSsAddress } from './discovery/posix.ts';
-import { parseNetstatOutput, parsePowerShellOutput, parseTasklist } from './discovery/windows.ts';
-import { looksLikeProjectDir, projectDirFromCommandLine, toLocalPath } from './identify.ts';
+import { run } from './discovery/run.ts';
+import { discoverWindows, parseNetstatOutput, parsePowerShellOutput, parseTasklist } from './discovery/windows.ts';
+import { identify, looksLikeProjectDir, projectDirFromCommandLine, toLocalPath } from './identify.ts';
 import { classify, extractTitle, isLoopbackHost, probe } from './probe.ts';
-import { parseManual, parseOverride, safeFolder, safeUrl, sanitizeConfig } from './config.ts';
+import { collectSources, dropRelayDuplicates, probeListener } from './scan.ts';
+import { ConfigFullError, ConfigStore, MAX_ITEMS, parseManual, parseOverride, safeFolder, safeUrl, sanitizeConfig } from './config.ts';
+
+const LOCAL_ENV: Env = process.platform === 'win32' ? 'windows' : 'linux';
+
+/** A scratch folder inside the repo: OS temp dirs (e.g. Windows AppData) are not project folders. */
+function scratchDir(): string {
+  const dir = mkdtempSync(path.join(import.meta.dirname, '..', '.test-scratch-'));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
 describe('ss parsing', () => {
   it('parses address forms', () => {
@@ -201,5 +218,215 @@ describe('overrides and folders', () => {
   it('drops empty overrides from stored config', () => {
     const c = sanitizeConfig({ overrides: [{ key: 'a', name: 'A' }, { key: 'b' }, { key: 'c', folder: 'bad' }] });
     assert.deepEqual(c.overrides, [{ key: 'a', name: 'A' }]);
+  });
+});
+
+describe('identify on real folders', () => {
+  const listener = (l: Partial<Listener>): Listener => ({ env: LOCAL_ENV, port: 5000, addresses: ['127.0.0.1'], ...l });
+  const ctx = { host: LOCAL_ENV };
+
+  it('ignores a folder that does not exist (packaged-app virtual paths)', async () => {
+    const missing = path.join(scratchDir(), 'snapshot', 'bundle');
+    assert.deepEqual(await identify(listener({ cwd: missing }), ctx), {});
+    assert.deepEqual(await identify(listener({ commandLine: `node ${path.join(missing, 'app.js')}` }), ctx), {});
+  });
+
+  it('still identifies an existing project folder', async () => {
+    const dir = scratchDir();
+    writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'real-app' }));
+    mkdirSync(path.join(dir, 'src'));
+    const id = await identify(listener({ cwd: path.join(dir, 'src') }), ctx);
+    assert.deepEqual(id, { projectDir: dir, projectDirSource: 'cwd', packageName: 'real-app' });
+  });
+});
+
+describe('probe body cap', () => {
+  const servers: http.Server[] = [];
+  after(() => servers.forEach((s) => s.close()));
+
+  /** Serve HTML in two writes, so the title arrives in a separate chunk after `head`. */
+  const serve = (head: string, tail: string) =>
+    new Promise<number>((resolve) => {
+      const s = http.createServer((_q, r) => {
+        r.writeHead(200, { 'content-type': 'text/html' });
+        r.write(head);
+        setTimeout(() => r.end(tail), 30);
+      });
+      servers.push(s);
+      s.listen(0, '127.0.0.1', () => resolve((s.address() as net.AddressInfo).port));
+    });
+
+  const LIMIT = 64 * 1024;
+  const pad = (n: number) => 'x'.repeat(n);
+
+  for (const offset of [LIMIT - 1, LIMIT, LIMIT + 1, 100_000]) {
+    it(`ignores a title starting at byte ${offset}`, async () => {
+      const port = await serve(pad(65530), pad(offset - 65530) + '<title>BEYOND-CAP</title>');
+      const p = await probe({ host: '127.0.0.1', port });
+      assert.equal(p.kind, 'web');
+      assert.equal(p.title, undefined);
+    });
+  }
+
+  it('reads a title that ends exactly at the cap', async () => {
+    const title = '<title>INSIDE</title>';
+    const port = await serve(pad(60000), pad(LIMIT - 60000 - title.length) + title + pad(1000));
+    assert.equal((await probe({ host: '127.0.0.1', port })).title, 'INSIDE');
+  });
+
+  it('ignores a title past the cap inside one large chunk', async () => {
+    const port = await serve(pad(LIMIT) + '<title>ONE-CHUNK</title>', '');
+    assert.equal((await probe({ host: '127.0.0.1', port })).title, undefined);
+  });
+
+  it('settles on a truncated response instead of waiting for the timeout', async () => {
+    const s = http.createServer((_q, r) => {
+      r.writeHead(200, { 'content-type': 'text/html', 'content-length': '5000' });
+      r.write('<html><head>');
+      setTimeout(() => r.socket?.destroy(), 30);
+    });
+    servers.push(s);
+    const port = await new Promise<number>((resolve) => s.listen(0, '127.0.0.1', () => resolve((s.address() as net.AddressInfo).port)));
+    const p = await probe({ host: '127.0.0.1', port, timeoutMs: 2000 });
+    assert.equal(p.kind, 'web');
+    assert.ok((p.ms ?? Infinity) < 1000, `took ${p.ms} ms`);
+  });
+});
+
+describe('TLS retry', () => {
+  // Needs openssl to mint a throwaway self-signed certificate; skipped where it is missing.
+  let tls: { key: string; cert: string } | undefined;
+  try {
+    const dir = mkdtempSync(path.join(import.meta.dirname, '..', '.test-scratch-'));
+    try {
+      execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost',
+        '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem')], { stdio: 'ignore' });
+      tls = { key: readFileSync(path.join(dir, 'k.pem'), 'utf8'), cert: readFileSync(path.join(dir, 'c.pem'), 'utf8') };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  } catch {
+    tls = undefined;
+  }
+  const servers: https.Server[] = [];
+  after(() => servers.forEach((s) => s.close()));
+  const listen = (handler: http.RequestListener) =>
+    new Promise<number>((resolve) => {
+      const s = https.createServer(tls!, handler);
+      servers.push(s);
+      s.listen(0, '127.0.0.1', () => resolve((s.address() as net.AddressInfo).port));
+    });
+  const listener = (port: number): Listener => ({ env: LOCAL_ENV, port, addresses: ['127.0.0.1'] });
+
+  it('retries a TLS dev server over HTTPS', { skip: !tls && 'openssl not available' }, async () => {
+    const port = await listen((_q, r) => r.writeHead(200, { 'content-type': 'text/html' }).end('<title>Secure</title>'));
+    const { probe: p, protocol } = await probeListener(listener(port), LOCAL_ENV, undefined);
+    assert.equal(protocol, 'https:');
+    assert.equal(p.kind, 'web');
+    assert.equal(p.title, 'Secure');
+  });
+
+  it('keeps the plain result when the HTTPS retry is truncated', { skip: !tls && 'openssl not available' }, async () => {
+    const port = await listen((_q, r) => r.socket?.destroy());
+    const { probe: p, protocol } = await probeListener(listener(port), LOCAL_ENV, undefined);
+    assert.equal(protocol, 'http:');
+    assert.equal(p.kind, 'tcp');
+  });
+});
+
+describe('source orchestration', () => {
+  const l = (env: Env, port: number, processName?: string): Listener => ({ env, port, addresses: ['127.0.0.1'], processName });
+  const ok = (env: Env, listeners: Listener[]) => ({ env, method: 'fake', discover: async () => ({ listeners, method: 'fake', notes: [] }) });
+  const failing = (env: Env, message: string) => ({ env, method: 'fake', discover: async () => Promise.reject(new Error(message)) });
+
+  it('reports a failed source and keeps the others', async () => {
+    for (const message of ['powershell.exe timed out', 'wsl.exe not found', 'Unexpected end of JSON input']) {
+      const r = await collectSources([failing('windows', message), ok('wsl', [l('wsl', 5173)])]);
+      assert.deepEqual(r.listeners.map((x) => x.port), [5173]);
+      assert.deepEqual(r.sources.map((s) => [s.env, s.ok, s.error]), [['windows', false, message], ['wsl', true, undefined]]);
+    }
+  });
+
+  it('turns malformed tool output into no listeners, not an error', () => {
+    assert.deepEqual(parsePosixOutput('garbage\n\0\nLISTEN nonsense', 'wsl').listeners, []);
+    assert.throws(() => parsePowerShellOutput('{"listeners": [oops'));
+    assert.deepEqual(parseNetstatOutput('Active Connections\n  TCP junk', new Map()), []);
+  });
+
+  it('falls back to netstat when PowerShell fails', async () => {
+    const calls: string[] = [];
+    const exec: typeof run = async (file) => {
+      calls.push(path.basename(file));
+      if (/powershell/i.test(file)) throw new Error('powershell.exe timed out');
+      if (/tasklist/i.test(file)) return { stdout: '"node.exe","4242","Console","1","50,000 K"\n', stderr: '' };
+      return { stdout: '  TCP    127.0.0.1:5300         0.0.0.0:0              LISTENING       4242\n', stderr: '' };
+    };
+    const out = await discoverWindows(exec);
+    assert.equal(out.method, 'netstat.exe + tasklist.exe');
+    assert.match(out.notes[0], /PowerShell discovery failed \(powershell.exe timed out\); fell back to netstat/);
+    assert.deepEqual(out.listeners.map((x) => [x.port, x.pid, x.processName]), [[5300, 4242, 'node.exe']]);
+    assert.ok(calls.some((c) => /netstat/i.test(c)));
+  });
+
+  it('turns a hung or missing tool into an error message', async () => {
+    await assert.rejects(run(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { timeoutMs: 200 }), /timed out/);
+    await assert.rejects(run('the-shed-no-such-tool', []), /the-shed-no-such-tool not found/);
+  });
+
+  it('shows a WSL port once when wslrelay re-listens on Windows', () => {
+    const merged = dropRelayDuplicates([l('wsl', 5173, 'node'), l('windows', 5173, 'wslrelay.exe'), l('windows', 8080, 'wslrelay.exe'), l('windows', 3000, 'node.exe'), l('wsl', 3000, 'node')]);
+    assert.deepEqual(merged.map((x) => `${x.env}:${x.port}:${x.processName}`), ['wsl:5173:node', 'windows:8080:wslrelay.exe', 'windows:3000:node.exe', 'wsl:3000:node']);
+  });
+});
+
+describe('preference capacity', () => {
+  const entries = {
+    manual: (i: number) => ({ id: `m${i}`, name: `m${i}`, url: `http://localhost:${1000 + i}` }),
+    favourites: (i: number) => ({ key: `port:wsl:${i}`, name: `f${i}`, url: `http://localhost:${1000 + i}` }),
+    hidden: (i: number) => ({ id: `h${i}`, kind: 'port', env: 'wsl', port: 1000 + i }),
+    overrides: (i: number) => ({ key: `port:wsl:${i}`, name: `o${i}` }),
+  };
+  const lists = Object.keys(entries) as (keyof typeof entries)[];
+
+  const storeWith = (counts: Partial<Record<keyof typeof entries, number>>, extra: Record<string, unknown[]> = {}) => {
+    const file = path.join(scratchDir(), 'config.json');
+    const raw: Record<string, unknown[]> = {};
+    for (const list of lists) raw[list] = [...Array.from({ length: counts[list] ?? 0 }, (_, i) => entries[list](i)), ...(extra[list] ?? [])];
+    writeFileSync(file, JSON.stringify(raw));
+    return { file, store: new ConfigStore(file) };
+  };
+
+  for (const list of lists) {
+    it(`${list}: adds up to ${MAX_ITEMS}, rejects the next without losing anything`, () => {
+      const { file, store } = storeWith({ [list]: MAX_ITEMS - 1 });
+      const add = (i: number) => store.update((c) => ({ ...c, [list]: [...c[list], entries[list](i)] }));
+      assert.equal(add(MAX_ITEMS - 1)[list].length, MAX_ITEMS);
+      const before = readFileSync(file, 'utf8');
+      assert.throws(() => add(MAX_ITEMS), ConfigFullError);
+      assert.equal(store.get()[list].length, MAX_ITEMS);
+      assert.equal(readFileSync(file, 'utf8'), before, 'file untouched by the rejected write');
+      assert.equal(new ConfigStore(file).get()[list].length, MAX_ITEMS, 'survives restart');
+    });
+
+    it(`${list}: keeps ${MAX_ITEMS + 1} valid saved entries and still drops malformed ones`, () => {
+      const { file, store } = storeWith({ [list]: MAX_ITEMS + 1 }, { [list]: ['junk', { bad: true }] });
+      assert.equal(store.get()[list].length, MAX_ITEMS + 1);
+      // Changes that don't grow the list still save.
+      store.update((c) => ({ ...c, [list]: c[list].slice(1) }));
+      assert.equal(new ConfigStore(file).get()[list].length, MAX_ITEMS);
+    });
+  }
+
+  it('leaves the saved file and memory unchanged when the write fails', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {
+    const { file, store } = storeWith({ manual: 1 });
+    const before = readFileSync(file, 'utf8');
+    chmodSync(path.dirname(file), 0o500);
+    try {
+      assert.throws(() => store.update((c) => ({ ...c, manual: [...c.manual, entries.manual(1)] })));
+    } finally {
+      chmodSync(path.dirname(file), 0o700);
+    }
+    assert.equal(store.get().manual.length, 1);
+    assert.equal(readFileSync(file, 'utf8'), before);
   });
 });

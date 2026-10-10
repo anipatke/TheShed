@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import type { Env } from '../shared/types.ts';
+import type { Env, Project } from '../shared/types.ts';
 import type { Listener } from './discovery/listener.ts';
 import { parsePosixOutput, parseSsAddress } from './discovery/posix.ts';
 import { run } from './discovery/run.ts';
 import { discoverWindows, parseNetstatOutput, parsePowerShellOutput, parseTasklist } from './discovery/windows.ts';
-import { identify, looksLikeProjectDir, projectDirFromCommandLine, toLocalPath } from './identify.ts';
+import { identify, looksLikeProjectDir, projectDirFromCommandLine, toLocalPath, wslUncToPosix } from './identify.ts';
 import { classify, extractTitle, isLoopbackHost, probe } from './probe.ts';
 import { collectSources, dropRelayDuplicates, probeListener } from './scan.ts';
-import { ConfigFullError, ConfigStore, MAX_ITEMS, parseManual, parseOverride, safeFolder, safeUrl, sanitizeConfig } from './config.ts';
+import { ConfigFullError, addProject, ConfigStore, MAX_ITEMS, inferFolderEnv, parseOverride, parseProject, validateProject, safeFolder, safeUrl, sanitizeConfig } from './config.ts';
 
 const LOCAL_ENV: Env = process.platform === 'win32' ? 'windows' : 'linux';
 
@@ -180,14 +180,15 @@ describe('probe against real sockets', () => {
 describe('config validation', () => {
   it('drops invalid entries instead of failing', () => {
     const c = sanitizeConfig({
-      manual: [{ name: 'ok', url: 'http://localhost:3000' }, { name: 'bad', url: 'javascript:alert(1)' }, 'junk'],
+      version: 2,
+      projects: [{ name: 'ok', url: 'http://localhost:3000' }, { name: 'bad', url: 'javascript:alert(1)' }, 'junk'],
       favourites: [{ key: 'k', name: 'n', url: 'file:///etc/passwd' }],
       hidden: [{ kind: 'port', env: 'wsl', port: 99999 }, { kind: 'process', env: 'windows', process: 'steam.exe' }],
-    });
-    assert.equal(c.manual.length, 1);
+    }, 'linux');
+    assert.equal(c.projects.length, 1);
     assert.equal(c.favourites.length, 0);
     assert.deepEqual(c.hidden.map((h) => h.kind), ['process']);
-    assert.deepEqual(sanitizeConfig(null), { version: 1, manual: [], favourites: [], hidden: [], overrides: [] });
+    assert.deepEqual(sanitizeConfig(null, 'linux'), { version: 2, projects: [], favourites: [], hidden: [], overrides: [] });
   });
 
   it('allows only http(s) URLs', () => {
@@ -210,13 +211,14 @@ describe('overrides and folders', () => {
     assert.equal(parseOverride({ name: 'no key' }), undefined);
   });
 
-  it('keeps an optional folder on manual projects', () => {
-    assert.equal(parseManual({ name: 'a', url: 'http://localhost:1', folder: 'C:\\dev\\a' }, 'id')?.folder, 'C:\\dev\\a');
-    assert.equal(parseManual({ name: 'a', url: 'http://localhost:1', folder: 'nope' }, 'id')?.folder, undefined);
+  it('keeps a folder on a project only with a matching environment', () => {
+    const p = { name: 'a', url: 'http://localhost:1' };
+    assert.equal(parseProject({ ...p, env: 'windows', folder: 'C:\\dev\\a' }, 'linux', 'id')?.folder, 'C:\\dev\\a');
+    assert.equal(parseProject({ ...p, env: 'windows', folder: 'nope' }, 'linux', 'id'), undefined);
   });
 
   it('drops empty overrides from stored config', () => {
-    const c = sanitizeConfig({ overrides: [{ key: 'a', name: 'A' }, { key: 'b' }, { key: 'c', folder: 'bad' }] });
+    const c = sanitizeConfig({ overrides: [{ key: 'a', name: 'A' }, { key: 'b' }, { key: 'c', folder: 'bad' }] }, 'linux');
     assert.deepEqual(c.overrides, [{ key: 'a', name: 'A' }]);
   });
 });
@@ -381,7 +383,7 @@ describe('source orchestration', () => {
 
 describe('preference capacity', () => {
   const entries = {
-    manual: (i: number) => ({ id: `m${i}`, name: `m${i}`, url: `http://localhost:${1000 + i}` }),
+    projects: (i: number) => ({ id: `m${i}`, name: `m${i}`, url: `http://localhost:${1000 + i}` }),
     favourites: (i: number) => ({ key: `port:wsl:${i}`, name: `f${i}`, url: `http://localhost:${1000 + i}` }),
     hidden: (i: number) => ({ id: `h${i}`, kind: 'port', env: 'wsl', port: 1000 + i }),
     overrides: (i: number) => ({ key: `port:wsl:${i}`, name: `o${i}` }),
@@ -392,8 +394,8 @@ describe('preference capacity', () => {
     const file = path.join(scratchDir(), 'config.json');
     const raw: Record<string, unknown[]> = {};
     for (const list of lists) raw[list] = [...Array.from({ length: counts[list] ?? 0 }, (_, i) => entries[list](i)), ...(extra[list] ?? [])];
-    writeFileSync(file, JSON.stringify(raw));
-    return { file, store: new ConfigStore(file) };
+    writeFileSync(file, JSON.stringify({ version: 2, ...raw }));
+    return { file, store: new ConfigStore(file, 'linux') };
   };
 
   for (const list of lists) {
@@ -405,7 +407,7 @@ describe('preference capacity', () => {
       assert.throws(() => add(MAX_ITEMS), ConfigFullError);
       assert.equal(store.get()[list].length, MAX_ITEMS);
       assert.equal(readFileSync(file, 'utf8'), before, 'file untouched by the rejected write');
-      assert.equal(new ConfigStore(file).get()[list].length, MAX_ITEMS, 'survives restart');
+      assert.equal(new ConfigStore(file, 'linux').get()[list].length, MAX_ITEMS, 'survives restart');
     });
 
     it(`${list}: keeps ${MAX_ITEMS + 1} valid saved entries and still drops malformed ones`, () => {
@@ -413,20 +415,231 @@ describe('preference capacity', () => {
       assert.equal(store.get()[list].length, MAX_ITEMS + 1);
       // Changes that don't grow the list still save.
       store.update((c) => ({ ...c, [list]: c[list].slice(1) }));
-      assert.equal(new ConfigStore(file).get()[list].length, MAX_ITEMS);
+      assert.equal(new ConfigStore(file, 'linux').get()[list].length, MAX_ITEMS);
     });
   }
 
   it('leaves the saved file and memory unchanged when the write fails', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {
-    const { file, store } = storeWith({ manual: 1 });
+    const { file, store } = storeWith({ projects: 1 });
     const before = readFileSync(file, 'utf8');
     chmodSync(path.dirname(file), 0o500);
     try {
-      assert.throws(() => store.update((c) => ({ ...c, manual: [...c.manual, entries.manual(1)] })));
+      assert.throws(() => store.update((c) => ({ ...c, projects: [...c.projects, entries.projects(1)] })));
     } finally {
       chmodSync(path.dirname(file), 0o700);
     }
-    assert.equal(store.get().manual.length, 1);
+    assert.equal(store.get().projects.length, 1);
     assert.equal(readFileSync(file, 'utf8'), before);
+  });
+});
+
+describe('config version 2', () => {
+  const v1 = {
+    version: 1,
+    manual: [
+      { id: 'a', name: 'Site', url: 'http://localhost:3000' },
+      { id: 'b', name: 'Win', url: 'http://localhost:3001', folder: 'C:\\dev\\win' },
+      { id: 'c', name: 'Posix', url: 'http://localhost:3002', folder: '/home/me/posix' },
+      { id: 'd', name: 'Unc', url: 'http://localhost:3003', folder: '\\\\wsl.localhost\\Ubuntu\\home\\me\\unc' },
+      { id: 'e', name: 'Old', url: 'http://localhost:3004', folder: '\\\\wsl$\\Ubuntu\\srv' },
+      { id: 'f', name: 'Share', url: 'http://localhost:3005', folder: '\\\\server\\share\\app' },
+    ],
+    favourites: [
+      { key: 'manual:a', name: 'Site', url: 'http://localhost:3000' },
+      { key: 'port:wsl:5173', name: 'Vite', url: 'http://localhost:5173' },
+    ],
+    hidden: [{ id: 'h1', kind: 'port', env: 'wsl', port: 22 }],
+    overrides: [{ key: 'port:wsl:5173', name: 'Mine', folder: '/home/me/vite' }],
+  };
+
+  it('keeps a V1 project with a WSL UNC folder when the host is plain Linux (I-006)', () => {
+    const raw = { version: 1, manual: [{ id: 'd', name: 'Unc', url: 'http://localhost:3003', folder: '\\\\wsl.localhost\\Ubuntu\\home\\me\\unc' }] };
+    for (const host of ['linux', 'wsl', 'windows'] as const) {
+      const [p] = sanitizeConfig(structuredClone(raw), host).projects;
+      assert.equal(p?.id, 'd', host);
+      assert.equal(p.env, 'wsl', host);
+      assert.equal(p.folder, '/home/me/unc', host);
+    }
+  });
+
+  it('upgrades a V1 file on a WSL host, keeping ids, names and URLs', () => {
+    const c = sanitizeConfig(structuredClone(v1), 'wsl');
+    assert.equal(c.version, 2);
+    assert.deepEqual(c.projects, [
+      { id: 'a', name: 'Site', url: 'http://localhost:3000/' },
+      { id: 'b', name: 'Win', env: 'windows', folder: 'C:\\dev\\win', url: 'http://localhost:3001/' },
+      { id: 'c', name: 'Posix', env: 'wsl', folder: '/home/me/posix', url: 'http://localhost:3002/' },
+      { id: 'd', name: 'Unc', env: 'wsl', folder: '/home/me/unc', url: 'http://localhost:3003/' },
+      { id: 'e', name: 'Old', env: 'wsl', folder: '/srv', url: 'http://localhost:3004/' },
+      { id: 'f', name: 'Share', env: 'windows', folder: '\\\\server\\share\\app', url: 'http://localhost:3005/' },
+    ]);
+    assert.equal('manual' in c, false);
+  });
+
+  it('puts a POSIX folder in linux on a plain Linux host, wsl on Windows or WSL', () => {
+    const one = { version: 1, manual: [{ id: 'c', name: 'P', url: 'http://localhost:1', folder: '/home/me/p' }] };
+    assert.equal(sanitizeConfig(one, 'linux').projects[0].env, 'linux');
+    assert.equal(sanitizeConfig(one, 'windows').projects[0].env, 'wsl');
+    assert.equal(sanitizeConfig(one, 'wsl').projects[0].env, 'wsl');
+  });
+
+  it('rewrites manual favourites to project keys and leaves hide rules and overrides alone', () => {
+    const c = sanitizeConfig(structuredClone(v1), 'wsl');
+    assert.deepEqual(c.favourites.map((f) => f.key), ['project:a', 'port:wsl:5173']);
+    assert.deepEqual(c.hidden, v1.hidden);
+    assert.deepEqual(c.overrides, v1.overrides);
+  });
+
+  it('loads a V2 file unchanged', () => {
+    const v2 = {
+      version: 2,
+      projects: [{ id: 'p', name: 'P', env: 'wsl', folder: '/home/me/p', port: 3000, url: 'http://localhost:3000/' }, { id: 'q', name: 'Q' }],
+      favourites: [{ key: 'project:p', name: 'P', url: 'http://localhost:3000/' }],
+      hidden: [],
+      overrides: [],
+    };
+    const c = sanitizeConfig(structuredClone(v2), 'linux');
+    assert.deepEqual(c.projects, v2.projects);
+    assert.deepEqual(c.favourites.map((f) => f.key), ['project:p']);
+  });
+
+  it('upgrades a V1 file on disk and writes V2 on the next change', () => {
+    const file = path.join(scratchDir(), 'config.json');
+    writeFileSync(file, JSON.stringify(v1));
+    const store = new ConfigStore(file, 'wsl');
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).version, 1, 'nothing is rewritten on load');
+    store.update((c) => c);
+    const saved = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(saved.version, 2);
+    assert.equal(saved.projects.length, 6);
+  });
+
+  it('moves an unparseable file aside instead of deleting it', () => {
+    const dir = scratchDir();
+    const file = path.join(dir, 'config.json');
+    writeFileSync(file, '{ not json');
+    const store = new ConfigStore(file, 'linux');
+    assert.deepEqual(store.get().projects, []);
+    const kept = readdirSync(dir).filter((n) => n.startsWith('config.json.broken-'));
+    assert.equal(kept.length, 1);
+    assert.equal(readFileSync(path.join(dir, kept[0]), 'utf8'), '{ not json');
+  });
+});
+
+describe('project validation', () => {
+  const ok = { name: 'P', env: 'wsl', folder: '/home/me/p' };
+
+  it('requires an environment exactly when there is a folder', () => {
+    assert.equal(typeof validateProject({ name: 'P', folder: '/home/me/p' }, 'x', 'wsl'), 'string');
+    assert.equal(typeof validateProject({ name: 'P', env: 'wsl' }, 'x', 'wsl'), 'string');
+    assert.deepEqual(validateProject({ name: 'P' }, 'x', 'wsl'), { id: 'x', name: 'P' });
+  });
+
+  it('infers the environment from the folder only when asked to', () => {
+    assert.equal((validateProject({ name: 'P', folder: 'C:\\p' }, 'x', 'wsl', true) as { env: Env }).env, 'windows');
+    assert.equal(typeof validateProject({ name: 'P', folder: 'C:\\p' }, 'x', 'wsl'), 'string');
+    assert.equal(inferFolderEnv('/a', 'linux'), 'linux');
+    assert.equal(inferFolderEnv('/a', 'windows'), 'wsl');
+  });
+
+  it('rejects a folder whose form does not fit the environment', () => {
+    assert.equal(typeof validateProject({ name: 'P', env: 'windows', folder: '/home/me/p' }, 'x', 'wsl'), 'string');
+    assert.equal(typeof validateProject({ name: 'P', env: 'wsl', folder: 'C:\\p' }, 'x', 'wsl'), 'string');
+    assert.equal(typeof validateProject({ name: 'P', env: 'linux', folder: 'C:\\p' }, 'x', 'linux'), 'string');
+    assert.equal(typeof validateProject({ name: 'P', env: 'windows', folder: '\\\\wsl.localhost\\Ubuntu\\home' }, 'x', 'wsl'), 'string');
+    assert.equal(typeof validateProject({ ...ok, env: 'mac' }, 'x', 'wsl'), 'string');
+  });
+
+  it('stores a WSL project given a UNC path in POSIX form', () => {
+    const p = validateProject({ name: 'P', env: 'wsl', folder: '\\\\wsl.localhost\\Ubuntu\\home\\me\\p' }, 'x', 'windows');
+    assert.deepEqual(p, { id: 'x', name: 'P', env: 'wsl', folder: '/home/me/p' });
+  });
+
+  it('accepts ports 1–65535 only', () => {
+    for (const port of [1, 3000, 65535]) assert.equal((validateProject({ ...ok, port }, 'x', 'wsl') as { port: number }).port, port);
+    for (const port of [0, -1, 65536, 3000.5, '3000', NaN]) assert.equal(typeof validateProject({ ...ok, port }, 'x', 'wsl'), 'string', String(port));
+    assert.equal(sanitizeConfig({ version: 2, projects: [{ ...ok, id: 'x', port: 70000 }] }, 'wsl').projects.length, 0, 'dropped on load');
+  });
+
+  it('keeps URL rules: http(s) only, and a bad URL is refused rather than dropped', () => {
+    assert.equal(typeof validateProject({ name: 'P', url: 'javascript:alert(1)' }, 'x', 'wsl'), 'string');
+    assert.equal((validateProject({ name: 'P', url: 'http://localhost:1' }, 'x', 'wsl') as { url: string }).url, 'http://localhost:1/');
+  });
+});
+
+describe('WSL UNC paths', () => {
+  it('translates both host spellings to POSIX and ignores other paths', () => {
+    assert.equal(wslUncToPosix('\\\\wsl.localhost\\Ubuntu\\home\\me'), '/home/me');
+    assert.equal(wslUncToPosix('\\\\wsl$\\Ubuntu\\home\\me\\'), '/home/me');
+    assert.equal(wslUncToPosix('\\\\WSL.LOCALHOST\\Ubuntu'), '/');
+    assert.equal(wslUncToPosix('\\\\server\\share\\x'), undefined);
+    assert.equal(wslUncToPosix('C:\\x'), undefined);
+    assert.equal(wslUncToPosix('/home/me'), undefined);
+  });
+});
+
+describe('registering a discovered card', () => {
+  const base = sanitizeConfig({
+    version: 2,
+    favourites: [{ key: 'dir:wsl:/home/me/site#node', name: 'site', url: 'http://localhost:5173/' }, { key: 'port:wsl:9', name: 'x', url: 'http://localhost:9/' }],
+    overrides: [{ key: 'dir:wsl:/home/me/site#node', name: 'Mine' }, { key: 'port:wsl:9', name: 'Other' }],
+  }, 'wsl');
+  const project = { id: 'p1', name: 'Mine', env: 'wsl' as Env, folder: '/home/me/site' };
+
+  it('moves that card\'s favourite and override to the project in one change', () => {
+    const c = addProject(base, project, 'dir:wsl:/home/me/site#node');
+    assert.deepEqual(c.projects, [project]);
+    assert.deepEqual(c.favourites.map((f) => [f.key, f.name, f.url]), [['port:wsl:9', 'x', 'http://localhost:9/'], ['project:p1', 'Mine', 'http://localhost:5173/']]);
+    assert.deepEqual(c.overrides.map((o) => o.key), ['port:wsl:9']);
+  });
+
+  it('changes nothing else when no key is named', () => {
+    const c = addProject(base, project);
+    assert.deepEqual(c.favourites, base.favourites);
+    assert.deepEqual(c.overrides, base.overrides);
+  });
+});
+
+describe('launch command', () => {
+  const ok = { name: 'P', env: 'wsl', folder: '/home/me/p', port: 5173 };
+  const cmd = 'npm run dev -- --port {port} --strictPort';
+
+  it('is kept as entered (trimmed) and needs neither folder nor port', () => {
+    assert.deepEqual((validateProject({ ...ok, launch: { command: `  ${cmd} ` } }, 'x', 'wsl') as { launch: unknown }).launch, { command: cmd });
+    assert.deepEqual(validateProject({ name: 'P', launch: { command: cmd } }, 'x', 'wsl'), { id: 'x', name: 'P', launch: { command: cmd } });
+  });
+
+  it('refuses empty, over-long and multi-line commands with a reason', () => {
+    for (const command of ['', '   ', 'a'.repeat(1001), 'one\ntwo', 'one\rtwo', 'a\u0000b', 5]) {
+      assert.equal(typeof validateProject({ ...ok, launch: { command } }, 'x', 'wsl'), 'string', JSON.stringify(command));
+    }
+    assert.equal(typeof validateProject({ ...ok, launch: 'npm start' }, 'x', 'wsl'), 'string');
+  });
+
+  it('survives a save and reload; clearing removes it', () => {
+    const dir = mkdtempSync(path.join(import.meta.dirname, '..', '.test-scratch-'));
+    try {
+      const file = path.join(dir, 'config.json');
+      const store = new ConfigStore(file, 'wsl');
+      const p = validateProject({ ...ok, launch: { command: cmd } }, 'p1', 'wsl') as Project;
+      store.update((c) => addProject(c, p));
+      assert.deepEqual(new ConfigStore(file, 'wsl').get().projects[0].launch, { command: cmd });
+      const { launch: _gone, ...cleared } = p;
+      store.update((c) => ({ ...c, projects: [cleared] }));
+      assert.equal(new ConfigStore(file, 'wsl').get().projects[0].launch, undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops an invalid stored command on load but keeps the project', () => {
+    const raw = { version: 2, projects: [{ id: 'a', name: 'A', env: 'wsl', folder: '/home/me/a', launch: { command: 'x\ny' } }, { id: 'b', name: 'B', launch: {} }] };
+    const c = sanitizeConfig(raw, 'wsl');
+    assert.deepEqual(c.projects, [{ id: 'a', name: 'A', env: 'wsl', folder: '/home/me/a' }, { id: 'b', name: 'B' }]);
+  });
+
+  it('loads a V2 file without launch unchanged', () => {
+    const raw = { version: 2, projects: [{ id: 'a', name: 'A', env: 'wsl', folder: '/home/me/a', port: 3000 }], favourites: [], hidden: [], overrides: [] };
+    assert.deepEqual(sanitizeConfig(structuredClone(raw), 'wsl'), raw);
   });
 });

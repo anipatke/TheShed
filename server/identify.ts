@@ -94,6 +94,12 @@ export function toLocalPath(p: string, env: Env, ctx: HostContext): string | und
   return undefined;
 }
 
+/** `\\wsl.localhost\<distro>\a\b` or `\\wsl$\<distro>\a\b` → `/a/b`; undefined for any other path. */
+export function wslUncToPosix(p: string): string | undefined {
+  const m = /^\\\\wsl(?:\.localhost|\$)\\[^\\]+(?:\\(.*))?$/i.exec(p);
+  return m ? `/${(m[1] ?? '').replace(/\\/g, '/')}`.replace(/(.)\/$/, '$1') : undefined;
+}
+
 async function exists(p: string): Promise<boolean> {
   try {
     await stat(p);

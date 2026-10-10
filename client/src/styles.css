@@ -992,3 +992,166 @@ h1 {
     transition: none !important;
   }
 }
+
+/* ── Registered projects ── */
+
+.add__fields,
+.edit__fields {
+  display: grid;
+  gap: 12px;
+}
+
+.add__fields {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.edit__fields {
+  gap: 8px;
+}
+
+.add select,
+.edit select {
+  height: 36px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--text);
+  font: 14px var(--sans);
+}
+
+.edit select {
+  height: 32px;
+}
+
+.add input.mono {
+  font: 13px var(--mono);
+}
+
+.add__actions .btn--ghost,
+.edit__actions .btn--ghost {
+  margin-left: 0;
+}
+
+.card__warn {
+  margin: -4px 0 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(233, 177, 76, 0.4);
+  background: rgba(233, 177, 76, 0.08);
+  color: var(--http);
+  font-size: 12px;
+}
+
+.btn--editor {
+  color: var(--text-2);
+}
+
+/* Launch controls: run state, error panel, output view */
+.tag--managed {
+  color: var(--accent-hi);
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.tag--external {
+  color: var(--text-3);
+}
+
+.run {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.run__state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font: 600 12px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.run__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tcp);
+}
+
+.run__state--running .run__dot {
+  background: var(--live);
+}
+
+.run__state--starting .run__dot,
+.run__state--stopping .run__dot {
+  background: var(--http);
+}
+
+.run__state--exited .run__dot,
+.run__state--failed .run__dot {
+  background: var(--down);
+}
+
+.run__why {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.run__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run__error {
+  padding: 8px 10px;
+  border: 1px solid rgba(214, 90, 72, 0.5);
+  border-radius: 6px;
+  background: rgba(214, 90, 72, 0.08);
+  color: var(--down);
+  font-size: 12px;
+}
+
+.run__error pre,
+.log__text {
+  margin: 6px 0 0;
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.run__error pre {
+  color: var(--text-2);
+}
+
+.log {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.log__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  font: 600 11px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.log__text {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  color: var(--text-2);
+}

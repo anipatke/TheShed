@@ -15,6 +15,10 @@ If a rule can block a Check's verdict or require remediation, it must be defined
 
 Source tags: *owner* = owner's written briefs (Idea.md); *spike* = safety decision proven in `docs/SPIKE.md`.
 
+Owner sign-off, 2026-10-10 (O-004 retrospective, T-012): TEST-01 host-value cases and TEST-03 repeated Restart / SIGTERM-ignoring stop added, approved by owner.
+Owner sign-off, 2026-10-10 (O-003 repair, I-011): SEC-02 now names the Windows `taskkill` stop helper, approved by owner (option A).
+Owner sign-off, 2026-10-10 (O-003 planning): SCOPE-02 replaced and SEC-02/SEC-04 rewritten to allow controlled launch of registered projects only; TEST-03 extended to launch/stop. Approved before any launch code landed.
+
 ## Severity Model
 
 | Severity | Meaning |
@@ -30,16 +34,16 @@ Source tags: *owner* = owner's written briefs (Idea.md); *spike* = safety decisi
 | ID | Severity | Source | Rule |
 |---|---|---|---|
 | SEC-01 | Blocker | owner | The server binds to `127.0.0.1` only, and the bind address is not configurable. |
-| SEC-02 | Blocker | owner, spike | Subprocesses run only fixed discovery scripts via argument arrays. No request, config or discovered data (ports, names, paths, titles, command lines) is ever interpolated into, or passed as, a command, script or argument; no API route can trigger anything else. |
+| SEC-02 | Blocker | owner, spike | Subprocesses are either fixed discovery scripts or a registered project's launch command. Discovery scripts are constant and run via argument arrays; no request, config or discovered data (ports, names, paths, titles, command lines) is ever interpolated into, or passed as, their command, script or arguments. A launch command is the project's stored command, passed to the platform shell as one argument with the project folder as working directory; the port reaches it only as a validated integer (substituted for `{port}` and set as `PORT`). Nothing discovered and no other request field is ever joined into it. The only other subprocess is the stop helper: on a Windows host, `taskkill /PID <pid> /T /F` with fixed arguments, where `<pid>` is an integer taken from a live run record of a process The Shed started. No API route can run anything else. |
 | SEC-03 | Blocker | owner | Discovered services are untrusted. Probes are bounded (timeout, body cap, no redirects); service text is rendered as plain text only; URLs the UI opens are never taken from a service's response. |
-| SEC-04 | Required | spike | The API rejects a non-loopback `Host`, and mutations with a non-localhost `Origin` or non-JSON body. User URLs must be `http(s)` and are probed only if loopback; user folders must be absolute paths and are stored and displayed only. |
+| SEC-04 | Required | spike | The API rejects a non-loopback `Host`, and mutations with a non-localhost `Origin` or non-JSON body. User URLs must be `http(s)` and are probed only if loopback; user folders must be absolute paths and are stored, displayed and turned into editor links in the browser. The server uses a registered folder only as the working directory of that project's launch command; it never reads files in it or executes anything found there. |
 
 ### Scope
 
 | ID | Severity | Source | Rule |
 |---|---|---|---|
 | SCOPE-01 | Blocker | owner | No feature may require admin, elevated or `sudo` privileges. Data hidden without them is reported as a limitation. |
-| SCOPE-02 | Blocker | owner | V1 is read-only: it never starts, stops or signals processes. |
+| SCOPE-02 | Blocker | owner | The Shed starts a process only from a registered project's own launch command, on an explicit user action. It stops or signals only processes it started in the current server session, tracked by a run record. No route or code path stops, signals or adopts any other process, including after a restart. Nothing restarts automatically. |
 | SCOPE-03 | Required | owner | No database, cloud service, account system or Docker dependency. The server uses Node built-ins only; any new dependency needs a reason recorded in Design Decisions. |
 
 ### Discovery
@@ -61,9 +65,9 @@ Matched to what can go wrong here: pure logic is cheap to unit-test, platform an
 
 | ID | Severity | Source | Rule |
 |---|---|---|---|
-| TEST-01 | Required | owner | Every changed behaviour has named evidence. Pure server logic (parsers, inference, classification, validation) gets a `node:test` case. OS, network or UI behaviour gets a recorded scenario: what was run, where, and the result. Name the exact test cases when citing existing ones. |
+| TEST-01 | Required | owner | Every changed behaviour has named evidence. Pure server logic (parsers, inference, classification, validation) gets a `node:test` case. OS, network or UI behaviour gets a recorded scenario: what was run, where, and the result. Name the exact test cases when citing existing ones. Logic that branches on the server host or a project environment gets a case for each value (`windows`, `wsl`, `linux`). |
 | TEST-02 | Required | owner | A bug fix in pure logic adds a regression test. A bug fix in OS, network or UI behaviour records its failing scenario and the passing re-run. |
-| TEST-03 | Required | owner | Windows/WSL discovery changes are verified on a real Windows + WSL machine. The evidence names the networking mode and which side hosted the server. |
+| TEST-03 | Required | owner | Windows/WSL discovery and launch/stop changes are verified on a real Windows + WSL machine. The evidence names the networking mode and which side hosted the server. Launch/stop evidence includes Restart repeated at least five times and a Stop of a server that ignores SIGTERM, each followed by an orphan and free-port check. Process-control fakes include a leader that exits before the rest of its group. |
 
 UI component tests and browser automation are not required in V1. Screenshots and recorded API runs are acceptable UI evidence.
 

@@ -1,7 +1,7 @@
 ---
 id: G-001
 title: TheShed
-status: in_progress
+status: done
 ---
 ## Outcome
 

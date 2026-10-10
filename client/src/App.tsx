@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Service, State } from '../../shared/types.ts';
 import { api } from './api.ts';
 import { Card, Row, type CardActions } from './Card.tsx';
-import { buildSections, ENV_LABEL, looksLikeFolder, timeAgo, type Item } from './model.ts';
+import { buildSections, ENV_LABEL, timeAgo, type Item } from './model.ts';
+import { ProjectForm } from './ProjectForm.tsx';
+import { isTransitioning } from './runs.ts';
 
 const AUTO_REFRESH_MS = 15_000;
+/** How often to ask for run state while a launch is starting or stopping. */
+const RUN_POLL_MS = 1000;
 
 function readAuto(): boolean {
   try {
@@ -22,73 +26,6 @@ function Logo() {
       <rect x="9" y="21.5" width="14" height="2.5" opacity=".7" />
       <rect x="9" y="26" width="14" height="2.5" opacity=".45" />
     </svg>
-  );
-}
-
-function AddProject({ onAdd, onClose }: { onAdd: (name: string, url: string, folder?: string) => Promise<void>; onClose: () => void }) {
-  const [name, setName] = useState('');
-  const [url, setUrl] = useState('http://localhost:');
-  const [folder, setFolder] = useState('');
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  const nameRef = useRef<HTMLInputElement>(null);
-  useEffect(() => nameRef.current?.focus(), []);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const u = new URL(url.trim());
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error();
-    } catch {
-      setError('Enter a full http:// or https:// URL');
-      return;
-    }
-    if (folder.trim() && !looksLikeFolder(folder.trim())) {
-      setError('Folder must be an absolute path');
-      return;
-    }
-    setBusy(true);
-    setError(undefined);
-    try {
-      await onAdd(name.trim(), url.trim(), folder.trim() || undefined);
-      onClose();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <form className="add" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
-      <div className="add__fields">
-        <label>
-          <span>Name</span>
-          <input ref={nameRef} value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required placeholder="Docs site" />
-        </label>
-        <label className="add__url">
-          <span>URL</span>
-          <input value={url} onChange={(e) => setUrl(e.target.value)} maxLength={2000} required inputMode="url" spellCheck={false} />
-        </label>
-        <label className="add__url">
-          <span>Folder (optional)</span>
-          <input value={folder} onChange={(e) => setFolder(e.target.value)} maxLength={1000} spellCheck={false} placeholder="/home/me/code/app or C:\dev\app" />
-        </label>
-      </div>
-      <div className="add__actions">
-        {error && (
-          <p className="add__error" role="alert">
-            {error}
-          </p>
-        )}
-        <button type="button" className="btn btn--ghost" onClick={onClose}>
-          Cancel
-        </button>
-        <button type="submit" className="btn btn--primary" disabled={busy || !name.trim()}>
-          {busy ? 'Adding…' : 'Add project'}
-        </button>
-      </div>
-    </form>
   );
 }
 
@@ -160,6 +97,8 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
+  /** Start/stop requests the server has not answered yet; the answer waits on a fresh scan. */
+  const [inFlight, setInFlight] = useState(0);
   const scanningRef = useRef(false);
 
   const refresh = useCallback(async (force: boolean) => {
@@ -207,29 +146,57 @@ export function App() {
     }
   }, []);
 
+  // While a run is starting or stopping its state changes by itself; ask often, then rescan once it settles.
+  const transitioning = inFlight > 0 || (state?.runs.some(isTransitioning) ?? false);
+  useEffect(() => {
+    if (!transitioning) return;
+    const t = setInterval(() => {
+      api.state(false).then(setState, () => undefined);
+    }, RUN_POLL_MS);
+    return () => {
+      clearInterval(t);
+      void refresh(true);
+    };
+  }, [transitioning, refresh]);
+
   const actions: CardActions = useMemo(
     () => ({
       toggleFavourite: (item) => {
         if (item.type === 'offline') return void mutate(() => api.setFavourite(item.fav, false));
-        const key = item.type === 'service' ? item.service.favouriteKey : `manual:${item.project.id}`;
-        const env = item.type === 'service' ? item.service.env : undefined;
+        const key = item.type === 'service' ? item.service.favouriteKey : `project:${item.project.id}`;
+        const env = item.type === 'service' ? item.service.env : item.project.env;
         void mutate(() => api.setFavourite({ key, name: item.name, url: item.url, env }, !item.favourite));
       },
       // Throws on failure so the edit form can show the message and stay open.
       save: async (item, edit) => {
-        const folder = edit.folder || undefined;
-        const next =
-          item.type === 'manual'
-            ? await api.editManual(item.project.id, { name: edit.name, url: edit.url, folder })
-            : await api.setOverride(item.type === 'service' ? item.service.favouriteKey : item.fav.key, { name: edit.name || undefined, folder });
-        setState(next);
+        if (item.type === 'project') return;
+        const key = item.type === 'service' ? item.service.favouriteKey : item.fav.key;
+        setState(await api.setOverride(key, { name: edit.name || undefined, folder: edit.folder || undefined }));
         setError(undefined);
+      },
+      saveProject: async (id, draft) => {
+        setState(await api.editProject(id, draft));
+        setError(undefined);
+      },
+      registerProject: async (draft, fromKey) => {
+        setState(await api.addProject(draft, fromKey));
+        setError(undefined);
+      },
+      // Throws on refusal so the card can show the server's reason beside its button.
+      runAction: async (id, action) => {
+        setInFlight((n) => n + 1);
+        try {
+          setState(await (action === 'start' ? api.startProject(id) : action === 'stop' ? api.stopProject(id) : api.restartProject(id)));
+          setError(undefined);
+        } finally {
+          setInFlight((n) => n - 1);
+        }
       },
       hidePort: (s: Service) => void mutate(() => api.hide({ kind: 'port', env: s.env, port: s.port })),
       hideProcess: (s: Service) =>
         s.processName && void mutate(() => api.hide({ kind: 'process', env: s.env, process: s.processName! })),
       unhide: (item) => item.type === 'service' && item.hiddenBy && void mutate(() => api.unhide(item.hiddenBy!)),
-      removeManual: (id) => void mutate(() => api.removeManual(id)),
+      removeProject: (id) => void mutate(() => api.removeProject(id)),
     }),
     [mutate],
   );
@@ -296,7 +263,9 @@ export function App() {
         )}
       </div>
 
-      {adding && <AddProject onAdd={async (n, u, f) => setState(await api.addManual(n, u, f))} onClose={() => setAdding(false)} />}
+      {adding && (
+        <ProjectForm variant="add" submitLabel="Add project" onSubmit={(d) => actions.registerProject(d)} onClose={() => setAdding(false)} />
+      )}
 
       {error && (
         <div className="banner banner--error" role="alert">
@@ -347,7 +316,7 @@ export function App() {
                 'Nothing matches that filter.'
               ) : (
                 <>
-                  No dev servers found. Start one (e.g. <code>npm run dev</code>) and hit Refresh, or add a project by URL.
+                  No dev servers found. Start one (e.g. <code>npm run dev</code>) and hit Refresh, or add a project.
                 </>
               )
             }
@@ -381,7 +350,7 @@ export function App() {
       )}
 
       <footer className="colophon">
-        Bound to 127.0.0.1 · settings saved to a local JSON file · discovery is read-only
+        Bound to 127.0.0.1 · settings saved to a local JSON file · discovery is read-only; only projects you start here can be stopped here
       </footer>
     </div>
   );

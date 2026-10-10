@@ -2,9 +2,10 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Config, State } from '../shared/types.ts';
-import { ConfigFullError, ConfigStore, parseFavourite, parseHideRule, parseManual, parseOverride, safeFolder } from './config.ts';
-import { Scanner } from './scan.ts';
+import type { Config, Override, State } from '../shared/types.ts';
+import { ConfigFullError, addProject, ConfigStore, parseFavourite, parseHideRule, parseOverride, validateProject } from './config.ts';
+import { Scanner, detectHost } from './scan.ts';
+import { Supervisor, defaultCheckPort, refusalStatus } from './supervisor.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.SHED_PORT ?? 4777);
@@ -14,8 +15,18 @@ const STATIC_DIR = path.join(ROOT, 'dist');
 const CACHE_MS = 4000;
 const MAX_BODY = 16 * 1024;
 
-const store = new ConfigStore(process.env.SHED_CONFIG ?? path.join(ROOT, 'data', 'config.json'));
+const store = new ConfigStore(process.env.SHED_CONFIG ?? path.join(ROOT, 'data', 'config.json'), detectHost());
 const scanner = new Scanner({ serverPort: PORT }, () => store.get());
+const supervisor = new Supervisor({
+  hostEnv: store.host,
+  getProject: (id) => store.get().projects.find((p) => p.id === id),
+  // The bind attempt decides; a fresh scan, run only once the port is known busy, names the holder.
+  // Windows and WSL share one port space, so a holder on either side counts.
+  checkPort: defaultCheckPort(async (port) => {
+    const s = (await scanner.get(0)).services.find((x) => x.port === port);
+    return s ? `${s.processName ?? s.name}${s.pid ? ` (pid ${s.pid})` : ''}` : undefined;
+  }),
+});
 
 class HttpError extends Error {
   readonly status: number;
@@ -70,7 +81,7 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
 const TEN_MINUTES = 10 * 60 * 1000;
 
 /** Keep favourites' last-known URL and last-seen time current, writing at most every ten minutes per entry. */
-function trackFavourites(state: State): Config {
+function trackFavourites(state: Pick<State, 'scan' | 'config'>): Config {
   const now = Date.now();
   const running = new Map(state.scan.services.map((s) => [s.favouriteKey, s]));
   const stale = state.config.favourites.some((f) => {
@@ -90,23 +101,30 @@ function trackFavourites(state: State): Config {
 async function state(maxAgeMs = CACHE_MS): Promise<State> {
   const scan = await scanner.get(maxAgeMs);
   const config = trackFavourites({ scan, config: store.get() });
-  return { scan, config };
+  return { scan, config, runs: supervisor.runs() };
 }
 
-/** parseManual is lenient (for loading config); requests must not silently lose a bad folder. */
-function manualFromRequest(body: unknown, id: string) {
-  const folder = (body as Record<string, unknown> | null)?.folder;
-  if (folder !== undefined && folder !== null && folder !== '' && !safeFolder(folder)) throw new HttpError(400, 'Folder must be an absolute path');
-  const project = parseManual(body, id);
-  if (!project) throw new HttpError(400, 'Need a name (≤100 chars) and an http(s) URL');
+/**
+ * Requests are strict where a loaded file is lenient: a bad field is a 400 with its reason. A
+ * folder sent without an environment gets the one its form implies. `fromKey` names a discovered
+ * card being registered: its rename and folder fill what the request leaves out.
+ */
+function projectFromRequest(body: unknown, id: string, override?: Override) {
+  const project = validateProject({ name: override?.name, folder: override?.folder, ...(body as object) }, id, store.host, true);
+  if (typeof project === 'string') throw new HttpError(400, project);
   return project;
 }
 
 async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
   const method = req.method ?? 'GET';
-  if (method !== 'GET' && !originAllowed(req.headers.origin)) throw new HttpError(403, 'Cross-origin request refused');
+  if (method !== 'GET') {
+    if (!originAllowed(req.headers.origin)) throw new HttpError(403, 'Cross-origin request refused');
+    // A custom header can't be sent cross-site without a CORS preflight, which this server never grants.
+    if (!req.headers['x-shed']) throw new HttpError(403, 'Missing X-Shed header');
+  }
   const route = `${method} ${url.pathname}`;
-  const idMatch = /^\/api\/(manual|hidden)\/([\w-]{1,100})$/.exec(url.pathname);
+  const idMatch = /^\/api\/(projects|hidden)\/([\w-]{1,100})$/.exec(url.pathname);
+  const runMatch = /^\/api\/projects\/([\w-]{1,100})\/(start|stop|restart|log)$/.exec(url.pathname);
 
   if (route === 'GET /api/health') return send(res, 200, { ok: true });
 
@@ -114,19 +132,37 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return send(res, 200, await state(url.searchParams.has('refresh') ? 0 : CACHE_MS));
   }
 
-  if (route === 'POST /api/manual') {
-    const project = manualFromRequest(await readJson(req), crypto.randomUUID());
-    store.update((c) => ({ ...c, manual: [...c.manual, project] }));
-    await scanner.refreshManual();
+  if (route === 'POST /api/projects') {
+    const body = (await readJson(req)) as Record<string, unknown> | null;
+    const fromKey = typeof body?.fromKey === 'string' ? body.fromKey : undefined;
+    const current = store.get();
+    const override = fromKey ? current.overrides.find((o) => o.key === fromKey) : undefined;
+    const project = projectFromRequest(body, crypto.randomUUID(), override);
+    store.update((c) => addProject(c, project, fromKey));
+    await scanner.refreshProjects();
     return send(res, 200, await state());
   }
 
-  if (method === 'PUT' && idMatch?.[1] === 'manual') {
+  if (method === 'PUT' && idMatch?.[1] === 'projects') {
     const id = idMatch[2];
-    if (!store.get().manual.some((m) => m.id === id)) throw new HttpError(404, 'No such project');
-    const project = manualFromRequest(await readJson(req), id);
-    store.update((c) => ({ ...c, manual: c.manual.map((m) => (m.id === id ? project : m)) }));
-    await scanner.refreshManual();
+    if (!store.get().projects.some((p) => p.id === id)) throw new HttpError(404, 'No such project');
+    const project = projectFromRequest(await readJson(req), id);
+    store.update((c) => ({ ...c, projects: c.projects.map((p) => (p.id === id ? project : p)) }));
+    await scanner.refreshProjects();
+    return send(res, 200, await state());
+  }
+
+  if (runMatch && ((runMatch[2] === 'log' && method === 'GET') || (runMatch[2] !== 'log' && method === 'POST'))) {
+    const [, id, action] = runMatch;
+    if (!store.get().projects.some((p) => p.id === id)) throw new HttpError(404, 'No such project');
+    if (action === 'log') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      return void res.end(supervisor.log(id) ?? '');
+    }
+    await readJson(req); // body is `{}`; reading it enforces the JSON content type like other mutations
+    const result = await supervisor[action as 'start' | 'stop' | 'restart'](id);
+    if (!result.ok) throw new HttpError(refusalStatus(result.code), result.message);
+    await scanner.get(0); // a fresh scan so the new run and its port show up together
     return send(res, 200, await state());
   }
 
@@ -141,14 +177,15 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     return send(res, 200, await state());
   }
 
-  if (method === 'DELETE' && idMatch?.[1] === 'manual') {
+  if (method === 'DELETE' && idMatch?.[1] === 'projects') {
     await readJson(req); // body is `{}`; reading it enforces the JSON content type like other mutations
+    if (supervisor.isActive(idMatch[2])) throw new HttpError(409, 'This project is running; stop it first.');
     store.update((c) => ({
       ...c,
-      manual: c.manual.filter((m) => m.id !== idMatch[2]),
-      favourites: c.favourites.filter((f) => f.key !== `manual:${idMatch[2]}`),
+      projects: c.projects.filter((p) => p.id !== idMatch[2]),
+      favourites: c.favourites.filter((f) => f.key !== `project:${idMatch[2]}`),
     }));
-    await scanner.refreshManual();
+    await scanner.refreshProjects();
     return send(res, 200, await state());
   }
 
@@ -241,3 +278,19 @@ server.listen(PORT, BIND, () => {
   console.log(`[shed] The Shed is running at http://localhost:${PORT}  (bound to ${BIND} only)`);
   console.log(`[shed] Config: ${store.file}`);
 });
+
+const SHUTDOWN_WAIT_MS = 10_000;
+let shuttingDown = false;
+
+/** Stop what The Shed started, then exit. SIGKILL and End Task cannot be caught; those leave the project running, to be found as External. */
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shed] ${signal}: stopping projects The Shed started`);
+  server.close();
+  await Promise.race([supervisor.stopAll(), new Promise((r) => setTimeout(r, SHUTDOWN_WAIT_MS))]).catch((err) => console.error('[shed]', err));
+  process.exit(0);
+}
+
+// SIGBREAK is Ctrl+Break and console close on Windows; the others are a no-op or unavailable where they do not apply.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) process.on(signal, () => void shutdown(signal));

@@ -1,16 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Service } from '../../shared/types.ts';
-import { ENV_LABEL, KIND_LABEL, looksLikeFolder, safeHref, STATUS_LABEL, type Item } from './model.ts';
+import type { ProjectDraft } from './api.ts';
+import { ENV_LABEL, KIND_LABEL, looksLikeFolder, safeHref, serviceOf, STATUS_LABEL, type Item } from './model.ts';
+import { LogPanel } from './LogPanel.tsx';
+import { ProjectForm } from './ProjectForm.tsx';
+import { exitText, isActiveRun, isProblemRun, RUN_LABEL } from './runs.ts';
 
 export interface CardActions {
   toggleFavourite: (item: Item) => void;
   hidePort: (service: Service) => void;
   hideProcess: (service: Service) => void;
   unhide: (item: Item) => void;
-  removeManual: (id: string) => void;
-  /** Save a name/folder (and URL for manual projects). Empty strings clear. Rejects with a message. */
-  save: (item: Item, edit: { name: string; folder: string; url: string }) => Promise<void>;
+  removeProject: (id: string) => void;
+  /** Save a name/folder for a discovered or remembered card. Empty strings clear. Rejects with a message. */
+  save: (item: Item, edit: { name: string; folder: string }) => Promise<void>;
+  /** Save a registered project. Rejects with a message. */
+  saveProject: (id: string, draft: ProjectDraft) => Promise<void>;
+  /** Register a project; `fromKey` is the discovered card it came from. Rejects with a message. */
+  registerProject: (draft: ProjectDraft, fromKey?: string) => Promise<void>;
+  /** Start, stop or restart a project's launch. Rejects with the server's reason when refused. */
+  runAction: (id: string, action: 'start' | 'stop' | 'restart') => Promise<void>;
 }
+
+type FormMode = 'edit' | 'register';
 
 function shortPath(p: string): string {
   return p.replace(/^\/home\/[^/]+/, '~').replace(/^[A-Z]:\\Users\\[^\\]+/i, '~');
@@ -28,6 +40,86 @@ function StatusLamp({ item }: { item: Item }) {
 function KindTag({ item }: { item: Item }) {
   if (item.kind === 'unknown') return null;
   return <span className={`tag tag--kind tag--${item.kind}`}>{KIND_LABEL[item.kind]}</span>;
+}
+
+function OwnerTag({ item }: { item: Item }) {
+  if (!item.ownership) return null;
+  const managed = item.ownership === 'managed';
+  return (
+    <span className={`tag tag--${item.ownership}`} title={managed ? 'The Shed started this' : 'Not started by The Shed; it cannot be stopped from here'}>
+      {managed ? 'MANAGED' : 'EXTERNAL'}
+    </span>
+  );
+}
+
+/** Start/Stop/Restart for a registered project, its run state, a refusal, the error panel and the output view. */
+function RunControls({ item, actions }: { item: Extract<Item, { type: 'project' }>; actions: CardActions }) {
+  const { run, project } = item;
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string>();
+  const [logOpen, setLogOpen] = useState(false);
+  const active = isActiveRun(run);
+
+  const go = async (action: 'start' | 'stop' | 'restart') => {
+    setBusy(true);
+    setRefusal(undefined);
+    try {
+      await actions.runAction(project.id, action);
+    } catch (err) {
+      setRefusal((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exit = run && isProblemRun(run) ? exitText(run) : undefined;
+  return (
+    <div className="run">
+      {run && (
+        <p className={`run__state run__state--${run.state}`} role="status">
+          <span className="run__dot" aria-hidden="true" />
+          {RUN_LABEL[run.state]}
+          {run.state === 'running' && <span className="dim"> · port {run.port}</span>}
+        </p>
+      )}
+      {item.startBlock && !active && <p className="run__why">Cannot start: {item.startBlock}</p>}
+      {run && isProblemRun(run) && (
+        <div className="run__error" role="alert">
+          <strong>{run.state === 'failed' ? 'Launch failed' : 'Exited unexpectedly'}</strong>
+          {exit && <span> ({exit})</span>}
+          <pre>{run.message}</pre>
+        </div>
+      )}
+      {refusal && (
+        <p className="edit__error" role="alert">
+          {refusal}
+        </p>
+      )}
+      <div className="run__buttons">
+        {!active && !item.startBlock && (
+          <button type="button" className="btn btn--primary btn--small" disabled={busy} onClick={() => void go('start')}>
+            {busy ? 'Starting…' : 'Start'}
+          </button>
+        )}
+        {active && (
+          <>
+            <button type="button" className="btn btn--ghost btn--small" disabled={busy || run.state === 'stopping'} onClick={() => void go('stop')}>
+              {run.state === 'stopping' ? 'Stopping…' : 'Stop'}
+            </button>
+            <button type="button" className="btn btn--ghost btn--small" disabled={busy || run.state === 'stopping'} onClick={() => void go('restart')}>
+              Restart
+            </button>
+          </>
+        )}
+        {run && (
+          <button type="button" className="btn btn--ghost btn--small" aria-expanded={logOpen} onClick={() => setLogOpen((o) => !o)}>
+            Output
+          </button>
+        )}
+      </div>
+      {logOpen && run && <LogPanel projectId={project.id} onClose={() => setLogOpen(false)} />}
+    </div>
+  );
 }
 
 function Star({ on, onClick, name }: { on: boolean; onClick: () => void; name: string }) {
@@ -92,7 +184,8 @@ function OpenLink({ item, compact }: { item: Item; compact?: boolean }) {
   );
 }
 
-function ItemMenu({ item, actions, onEdit }: { item: Item; actions: CardActions; onEdit?: () => void }) {
+function ItemMenu({ item, actions, onForm }: { item: Item; actions: CardActions; onForm?: (mode: FormMode) => void }) {
+  const onEdit = onForm && (() => onForm('edit'));
   if (item.type === 'offline' && !onEdit) return null;
   return (
     <Menu label={`More actions for ${item.name}`}>
@@ -103,25 +196,31 @@ function ItemMenu({ item, actions, onEdit }: { item: Item; actions: CardActions;
         };
         const edit = onEdit && (
           <button type="button" role="menuitem" onClick={act(onEdit)}>
-            {item.type === 'manual' ? 'Edit…' : 'Rename / set folder…'}
+            {item.type === 'project' ? 'Edit…' : 'Rename / set folder…'}
           </button>
         );
         if (item.type === 'offline') return edit;
-        if (item.type === 'manual') {
+        if (item.type === 'project') {
           return (
             <>
               {edit}
-              <button type="button" role="menuitem" onClick={act(() => actions.removeManual(item.project.id))}>
+              <button type="button" role="menuitem" onClick={act(() => actions.removeProject(item.project.id))}>
                 Remove project
               </button>
             </>
           );
         }
         const s = item.service;
+        const register = onForm && (
+          <button type="button" role="menuitem" onClick={act(() => onForm('register'))}>
+            Register as project…
+          </button>
+        );
         if (item.hiddenBy) {
           return (
             <>
               {edit}
+              {register}
               <button type="button" role="menuitem" onClick={act(() => actions.unhide(item))}>
                 Unhide
               </button>
@@ -131,6 +230,7 @@ function ItemMenu({ item, actions, onEdit }: { item: Item; actions: CardActions;
         return (
           <>
             {edit}
+            {register}
             <button type="button" role="menuitem" onClick={act(() => actions.hidePort(s))}>
               Hide port {s.port}
             </button>
@@ -146,12 +246,11 @@ function ItemMenu({ item, actions, onEdit }: { item: Item; actions: CardActions;
   );
 }
 
+/** Rename / set folder for a discovered or remembered card. Projects use ProjectForm. */
 function EditForm({ item, actions, onDone }: { item: Item; actions: CardActions; onDone: () => void }) {
-  const isManual = item.type === 'manual';
   const userFolder = item.folderSource === 'user' ? item.folder ?? '' : '';
-  const [name, setName] = useState(isManual ? item.name : item.type === 'service' ? item.override?.name ?? '' : item.name);
+  const [name, setName] = useState(item.type === 'service' ? item.override?.name ?? '' : item.name);
   const [folder, setFolder] = useState(userFolder);
-  const [url, setUrl] = useState(item.url);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const first = useRef<HTMLInputElement>(null);
@@ -163,11 +262,10 @@ function EditForm({ item, actions, onDone }: { item: Item; actions: CardActions;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (folder.trim() && !looksLikeFolder(folder.trim())) return setError('Folder must be an absolute path');
-    if (isManual && !safeHref(url.trim())) return setError('Enter a full http:// or https:// URL');
     setBusy(true);
     setError(undefined);
     try {
-      await actions.save(item, { name: name.trim(), folder: folder.trim(), url: url.trim() });
+      await actions.save(item, { name: name.trim(), folder: folder.trim() });
       onDone();
     } catch (err) {
       setError((err as Error).message);
@@ -179,19 +277,13 @@ function EditForm({ item, actions, onDone }: { item: Item; actions: CardActions;
     <form className="edit" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onDone()}>
       <label>
         <span>Name</span>
-        <input ref={first} value={name} onChange={(e) => setName(e.target.value)} maxLength={100} placeholder={placeholderName} required={isManual} />
+        <input ref={first} value={name} onChange={(e) => setName(e.target.value)} maxLength={100} placeholder={placeholderName} />
       </label>
-      {isManual && (
-        <label>
-          <span>URL</span>
-          <input className="mono" value={url} onChange={(e) => setUrl(e.target.value)} maxLength={2000} spellCheck={false} required />
-        </label>
-      )}
       <label>
         <span>Folder</span>
         <input className="mono" value={folder} onChange={(e) => setFolder(e.target.value)} maxLength={1000} spellCheck={false} placeholder={placeholderFolder} />
       </label>
-      {!isManual && <p className="edit__hint">Leave blank to use what was discovered.</p>}
+      <p className="edit__hint">Leave blank to use what was discovered.</p>
       {error && (
         <p className="edit__error" role="alert">
           {error}
@@ -209,14 +301,32 @@ function EditForm({ item, actions, onDone }: { item: Item; actions: CardActions;
   );
 }
 
+/** The form a card shows in place of its details: edit a project, or register a discovered service as one. */
+function CardForm({ item, mode, actions, onDone }: { item: Item; mode: FormMode; actions: CardActions; onDone: () => void }) {
+  if (item.type === 'project') {
+    return (
+      <ProjectForm variant="edit" initial={item.project} submitLabel="Save" onClose={onDone} onSubmit={(d) => actions.saveProject(item.project.id, d)} />
+    );
+  }
+  if (mode === 'register' && item.type === 'service') {
+    const s = item.service;
+    const initial: ProjectDraft = { name: item.name, ...(item.folder && { env: s.env, folder: item.folder }), port: s.port, url: s.url };
+    return (
+      <ProjectForm variant="edit" initial={initial} submitLabel="Register" onClose={onDone} onSubmit={(d) => actions.registerProject(d, s.favouriteKey)} />
+    );
+  }
+  return <EditForm item={item} actions={actions} onDone={onDone} />;
+}
+
 const FOLDER_LABEL = { cwd: 'Dir', commandLine: 'Dir?', user: 'Dir' } as const;
 const FOLDER_HINT = { cwd: 'working directory', commandLine: 'inferred from command line', user: 'set by you' } as const;
 
 export function Card({ item, actions }: { item: Item; actions: CardActions }) {
-  const [editing, setEditing] = useState(false);
-  const s = item.type === 'service' ? item.service : undefined;
+  const [form, setForm] = useState<FormMode>();
+  const s = serviceOf(item);
   const title = s?.probe.title && s.probe.title !== item.name ? s.probe.title : undefined;
-  const env = s?.env ?? (item.type === 'offline' ? item.fav.env : undefined);
+  const env = item.type === 'project' ? item.project.env : s?.env ?? (item.type === 'offline' ? item.fav.env : undefined);
+  const port = s?.port ?? (item.type === 'project' ? item.project.port : undefined);
 
   return (
     <article className={`card card--${item.status}`}>
@@ -225,13 +335,14 @@ export function Card({ item, actions }: { item: Item; actions: CardActions }) {
         <div className="card__tags">
           <KindTag item={item} />
           {env && <span className="tag">{ENV_LABEL[env]}</span>}
-          {item.type === 'manual' && <span className="tag">MANUAL</span>}
+          {item.type === 'project' && <span className="tag">PROJECT</span>}
+          <OwnerTag item={item} />
         </div>
         <Star on={item.favourite} onClick={() => actions.toggleFavourite(item)} name={item.name} />
       </header>
 
-      {editing ? (
-        <EditForm item={item} actions={actions} onDone={() => setEditing(false)} />
+      {form ? (
+        <CardForm item={item} mode={form} actions={actions} onDone={() => setForm(undefined)} />
       ) : (
         <>
           <h3 className="card__name" title={item.discoveredName ? `${item.name} (discovered as ${item.discoveredName})` : item.name}>
@@ -244,12 +355,14 @@ export function Card({ item, actions }: { item: Item; actions: CardActions }) {
           )}
 
           <dl className="card__meta">
-            <div className="card__url">
-              <dt>URL</dt>
-              <dd>
-                <code>{item.url}</code>
-              </dd>
-            </div>
+            {item.url && (
+              <div className="card__url">
+                <dt>URL</dt>
+                <dd>
+                  <code>{item.url}</code>
+                </dd>
+              </div>
+            )}
             {item.folder && (
               <div>
                 <dt>{item.folderSource ? FOLDER_LABEL[item.folderSource] : 'Dir'}</dt>
@@ -277,12 +390,25 @@ export function Card({ item, actions }: { item: Item; actions: CardActions }) {
               </div>
             )}
           </dl>
+          {item.type === 'project' &&
+            item.warnings.map((w) => (
+              <p key={w} className="card__warn" role="status">
+                ⚠ {w}
+              </p>
+            ))}
+          {item.type === 'project' && <RunControls item={item} actions={actions} />}
         </>
       )}
 
       <footer className="card__actions">
-        <span className="card__port">{s ? `:${s.port}` : ''}</span>
-        <ItemMenu item={item} actions={actions} onEdit={!editing ? () => setEditing(true) : undefined} />
+        <span className="card__port">{port !== undefined ? `:${port}` : ''}</span>
+        <ItemMenu item={item} actions={actions} onForm={!form ? setForm : undefined} />
+        {item.type === 'project' &&
+          item.editors.map((e) => (
+            <a key={e.label} className="btn btn--small btn--editor" href={e.href} title={`Open the folder in ${e.label}`}>
+              {e.label}
+            </a>
+          ))}
         <OpenLink item={item} />
       </footer>
     </article>
@@ -291,7 +417,7 @@ export function Card({ item, actions }: { item: Item; actions: CardActions }) {
 
 /** Compact row for APIs, raw TCP listeners and hidden services. */
 export function Row({ item, actions }: { item: Item; actions: CardActions }) {
-  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<FormMode>();
   if (item.type !== 'service') return null;
   const s = item.service;
   return (
@@ -302,6 +428,7 @@ export function Row({ item, actions }: { item: Item; actions: CardActions }) {
       <span className="row__tags">
         <span className="tag">{ENV_LABEL[s.env]}</span>
         <KindTag item={item} />
+        <OwnerTag item={item} />
       </span>
       <span className="row__name" title={s.commandLine ?? item.name}>
         {item.name}
@@ -312,11 +439,11 @@ export function Row({ item, actions }: { item: Item; actions: CardActions }) {
       </span>
       <span className="row__actions">
         {item.kind !== 'other' && item.status !== 'offline' && <OpenLink item={item} compact />}
-        <ItemMenu item={item} actions={actions} onEdit={!editing ? () => setEditing(true) : undefined} />
+        <ItemMenu item={item} actions={actions} onForm={!form ? setForm : undefined} />
       </span>
-      {editing && (
+      {form && (
         <div className="row__edit">
-          <EditForm item={item} actions={actions} onDone={() => setEditing(false)} />
+          <CardForm item={item} mode={form} actions={actions} onDone={() => setForm(undefined)} />
         </div>
       )}
     </li>

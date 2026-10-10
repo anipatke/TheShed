@@ -1,11 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
-import type { Config, Env, ManualStatus, Probe, ScanResult, Service, SourceReport } from '../shared/types.ts';
+import type { Config, Env, ProjectStatus, Probe, ScanResult, Service, SourceReport } from '../shared/types.ts';
 import type { Listener, SourceOutput } from './discovery/listener.ts';
 import { discoverPosixLocal, discoverWslFromWindows } from './discovery/posix.ts';
 import { discoverWindows } from './discovery/windows.ts';
 import { run } from './discovery/run.ts';
 import { basename, identify, type HostContext } from './identify.ts';
 import { isLoopbackHost, mapLimit, probe } from './probe.ts';
+import { resolveProjects } from './registry.ts';
 
 export function detectHost(): Env {
   if (process.platform === 'win32') return 'windows';
@@ -105,8 +106,9 @@ export async function probeListener(l: Listener, host: Env, mode: string | undef
   return { probe: result, protocol };
 }
 
-async function probeManual(config: Config): Promise<ManualStatus[]> {
-  return mapLimit(config.manual, 8, async (m) => {
+async function probeProjects(config: Config): Promise<ProjectStatus[]> {
+  return mapLimit(config.projects, 8, async (m) => {
+    if (!m.url) return { id: m.id, probe: { kind: 'unverified', error: 'No URL to probe' } };
     let url: URL;
     try {
       url = new URL(m.url);
@@ -120,7 +122,7 @@ async function probeManual(config: Config): Promise<ManualStatus[]> {
     // `localhost` may be IPv4 or IPv6 only (Windows Node/Vite default to ::1), as a browser would, try both.
     let result = await probe({ ...target, host: url.hostname === 'localhost' ? '127.0.0.1' : url.hostname.replace(/^\[|\]$/g, '') });
     if (url.hostname === 'localhost' && result.kind === 'closed') result = await probe({ ...target, host: '::1' });
-    // A manual project is a URL, so anything that doesn't answer HTTP is down. (WSL's mirrored
+    // A project with a URL, so anything that doesn't answer HTTP is down. (WSL's mirrored
     // relay can briefly accept and reset connections to unused ports, which looks like "tcp".)
     return { id: m.id, probe: result.kind === 'tcp' ? { ...result, kind: 'closed' } : result };
   });
@@ -203,10 +205,11 @@ export async function scan(config: Config, opts: ScanOptions): Promise<ScanResul
   return {
     scannedAt: new Date().toISOString(),
     durationMs: Date.now() - started,
-    host: { env: host, networkingMode: mode },
+    host: { env: host, networkingMode: mode, distro },
     sources,
     services,
-    manual: await probeManual(config),
+    projects: await probeProjects(config),
+    ...resolveProjects(config, services),
   };
 }
 
@@ -230,8 +233,10 @@ export class Scanner {
     return this.inflight;
   }
 
-  /** Re-probe manual projects only (after the user adds or removes one). */
-  async refreshManual(): Promise<void> {
-    if (this.last) this.last = { ...this.last, manual: await probeManual(this.getConfig()) };
+  /** Re-probe registered projects only (after the user adds, edits or removes one). */
+  async refreshProjects(): Promise<void> {
+    if (!this.last) return;
+    const config = this.getConfig();
+    this.last = { ...this.last, projects: await probeProjects(config), ...resolveProjects(config, this.last.services) };
   }
 }

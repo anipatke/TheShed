@@ -1,4 +1,5 @@
-import type { Env, Favourite, HideRule, ManualProject, Override, Probe, Service, State } from '../../shared/types.ts';
+import type { Env, Favourite, HideRule, Override, PortConflict, Project, Probe, RunSummary, Service, State } from '../../shared/types.ts';
+import { ownershipOf, portMismatch, startBlock, type Ownership } from './runs.ts';
 
 /** What a thing is, independent of whether we can currently reach it. */
 export type Kind = 'website' | 'api' | 'other' | 'unknown';
@@ -18,12 +19,14 @@ interface Base {
   kind: Kind;
   status: Status;
   statusDetail: string;
+  /** Managed or External, for anything that is running. */
+  ownership?: Ownership;
 }
 
 /** Everything the UI shows as a card, whether discovered, typed in, or a remembered favourite. */
 export type Item =
   | (Base & { type: 'service'; service: Service; override?: Override; hiddenBy?: HideRule })
-  | (Base & { type: 'manual'; project: ManualProject; probe: Probe })
+  | (Base & { type: 'project'; project: Project; /** The running service this project absorbed. */ service?: Service; warnings: string[]; editors: EditorLink[]; /** The latest launch The Shed made for this project. */ run?: RunSummary; /** Why Start is not offered; absent when it is, or while a run is active. */ startBlock?: string })
   | (Base & { type: 'offline'; fav: Favourite });
 
 export interface Sections {
@@ -68,15 +71,29 @@ function matches(item: Item, query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase();
   const hay: (string | number | undefined)[] = [item.name, item.discoveredName, item.url, item.folder, KIND_LABEL[item.kind]];
-  if (item.type === 'service') {
-    const s = item.service;
-    hay.push(s.port, s.processName, s.probe.title, s.env);
-  }
+  const s = serviceOf(item);
+  if (s) hay.push(s.port, s.processName, s.probe.title, s.env);
+  if (item.type === 'project') hay.push(item.project.port, item.project.env);
   return hay.some((h) => h !== undefined && String(h).toLowerCase().includes(q));
 }
 
+/** The running service behind a card, if any. */
+export const serviceOf = (i: Item): Service | undefined => (i.type === 'offline' ? undefined : i.service);
+
+/** One plain sentence per conflict this project is part of, naming the other project or the process holding the port. */
+function conflictWarnings(project: Project, conflicts: PortConflict[], projects: Map<string, Project>): string[] {
+  return conflicts
+    .filter((c) => c.projectIds.includes(project.id))
+    .map((c) => {
+      const others = c.projectIds.filter((id) => id !== project.id).map((id) => projects.get(id)?.name ?? 'another project');
+      if (others.length) return `Port ${c.port} is also set for ${others.join(', ')}`;
+      const h = c.holder;
+      return `Port ${c.port} is in use by ${h?.processName ?? 'another process'}${h ? ` (${ENV_LABEL[h.env]})` : ''}`;
+    });
+}
+
 const byName = (a: Item, b: Item) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-const portOf = (i: Item) => (i.type === 'service' ? i.service.port : 0);
+const portOf = (i: Item) => serviceOf(i)?.port ?? 0;
 
 export function buildSections(state: State, query: string): Sections {
   const { scan, config } = state;
@@ -84,10 +101,18 @@ export function buildSections(state: State, query: string): Sections {
   const overrides = new Map(config.overrides.map((o) => [o.key, o]));
   const sections: Sections = { favourites: [], projects: [], pages: [], other: [], hidden: [] };
   const present = new Set<string>();
+  const serviceById = new Map(scan.services.map((sv) => [sv.id, sv]));
+  const matchByProject = new Map(scan.matches.map((m) => [m.projectId, serviceById.get(m.serviceId)]));
+  const absorbed = new Set(scan.matches.map((m) => m.serviceId));
 
   for (const service of scan.services) {
     if (service.self) continue;
     const key = service.favouriteKey;
+    if (absorbed.has(service.id)) {
+      // The project card stands in for this service, so its star must not also spawn an Offline card.
+      if (favKeys.has(key)) present.add(key);
+      continue;
+    }
     const override = overrides.get(key);
     const favourite = favKeys.has(key);
     const rule = hiddenBy(service, config.hidden);
@@ -105,6 +130,7 @@ export function buildSections(state: State, query: string): Sections {
       url: service.url,
       favourite,
       kind: kindOf(service.probe),
+      ownership: 'external',
       ...statusOf(service.probe),
     };
     if (favourite) present.add(key);
@@ -117,23 +143,34 @@ export function buildSections(state: State, query: string): Sections {
     else sections.other.push(item);
   }
 
-  const manualStatus = new Map(scan.manual.map((m) => [m.id, m.probe]));
-  for (const project of config.manual) {
-    const key = `manual:${project.id}`;
-    const favourite = favKeys.has(key);
-    const probe = manualStatus.get(project.id) ?? { kind: 'unverified' as const, error: 'Not probed yet' };
+  const urlStatus = new Map(scan.projects.map((m) => [m.id, m.probe]));
+  const projectsById = new Map(config.projects.map((p) => [p.id, p]));
+  const runByProject = new Map(state.runs.map((r) => [r.projectId, r]));
+  for (const project of config.projects) {
+    const key = `project:${project.id}`;
+    const service = matchByProject.get(project.id);
+    const favourite = favKeys.has(key) || (service !== undefined && favKeys.has(service.favouriteKey));
+    // Without a URL there is nothing to probe, so an unmatched project is simply not running.
+    const probe = service?.probe ?? (project.url ? urlStatus.get(project.id) : undefined);
+    const run = runByProject.get(project.id);
+    const mismatch = portMismatch(run, service);
     const item: Item = {
-      type: 'manual',
+      type: 'project',
       key,
       project,
-      probe,
+      service,
+      warnings: [...conflictWarnings(project, scan.conflicts, projectsById), ...(mismatch ? [mismatch] : [])],
+      run,
+      startBlock: startBlock(project, scan.host.env, run),
+      ownership: ownershipOf(run, service),
+      editors: editorLinks(project, scan.host.distro),
       name: project.name,
       folder: project.folder,
       folderSource: project.folder ? 'user' : undefined,
-      url: project.url,
+      url: project.url ?? service?.url ?? '',
       favourite,
-      kind: kindOf(probe),
-      ...statusOf(probe),
+      kind: probe ? kindOf(probe) : 'unknown',
+      ...(probe ? statusOf(probe) : { status: 'offline' as const, statusDetail: 'Not running' }),
     };
     if (favourite) present.add(key);
     if (!matches(item, query)) continue;
@@ -193,4 +230,36 @@ export function timeAgo(iso: string, now: number): string {
   if (s < 60) return `${s}s ago`;
   const m = Math.round(s / 60);
   return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+}
+
+export interface EditorLink {
+  label: string;
+  href: string;
+}
+
+const encodePath = (path: string): string =>
+  path
+    .split('/')
+    .map((seg) => (/^[a-z]:$/i.test(seg) ? seg : encodeURIComponent(seg)))
+    .join('/');
+
+/**
+ * Links that open a project's folder in VS Code and Cursor, built here because the server runs
+ * nothing. A WSL folder needs the distro name and gets none when it is unknown.
+ */
+export function editorLinks(project: Project, distro: string | undefined): EditorLink[] {
+  const { folder, env } = project;
+  if (!folder || !env) return [];
+  const editors = [
+    { label: 'VS Code', scheme: 'vscode' },
+    { label: 'Cursor', scheme: 'cursor' },
+  ];
+  if (env === 'wsl' && !distro) return [];
+  return editors.map(({ label, scheme }) => ({
+    label,
+    href:
+      env === 'wsl'
+        ? `${scheme}://vscode-remote/wsl+${encodeURIComponent(distro!)}${encodePath(folder)}`
+        : `${scheme}://file${env === 'windows' ? '/' : ''}${encodePath(env === 'windows' ? folder.replace(/\\/g, '/') : folder)}`,
+  }));
 }

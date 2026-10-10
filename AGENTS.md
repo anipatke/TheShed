@@ -132,7 +132,17 @@ Code style is project-owned policy: the `STYLE` rules in `.savepoint/Guardrails.
 
 List the project's gate commands here when they differ from, or add to, `quality_gates` in `.savepoint/config.yml` — for example a slower full gate for migration, platform-sensitive work, and Full Objective Checks.
 
+- `npm run build` writes only `dist/` (git-ignored). `npm test` creates `.test-scratch-*` folders in the repo, removes them afterwards, and opens sockets on 127.0.0.1. Both are safe for a Check to run and a Full Objective Check runs them. In a sandbox, `npm test` needs local-socket access: an EPERM failure there is the sandbox, so rerun with access rather than skipping the gate or reporting a product failure.
+
 See Verification Policy for gate evidence and reuse requirements.
+
+## Project Rules
+
+Owner-approved in the Goal 02 retrospective (O-004, 2026-10-10).
+
+- Before a Full Objective Check is requested, the planner (`savepoint-design`) reconciles `.savepoint/Design.md`, and any Guardrail rule text a Task's Drift Notes name, with the delivered code, and records that in the Objective. Do not request the Full Check while a Drift Note delta is unreconciled.
+- A Task that adds or changes behaviour governed by SEC-02, SCOPE-02 or DATA-01 (running or stopping processes, preference migration) gets the optional Task Check before the owner closes it. At handoff, agents ask the owner to request that Check rather than offering a waiver.
+- Timestamps written into Savepoint records come from the clock at the moment of writing (`date -u +%Y-%m-%dT%H:%M:%SZ`), never estimated.
 
 ## Codebase Map
 

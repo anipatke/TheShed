@@ -2,7 +2,7 @@
 id: I-015
 title: O-003 closed while T-010 and T-011 still lack the required owner acceptance
 type: verification
-status: open
+status: resolved
 source:
   kind: report
   actor: {role: executor, session: t012-retrospective-20261010}
@@ -10,11 +10,20 @@ source:
 tasks: [T-010, T-011, T-012]
 checks: [C-008]
 severity: low
+resolution:
+  disposition: accepted
+  actor: {role: owner, session: owner-goal02-close-20261010T204358Z}
+  at: '2026-10-10T20:43:58Z'
+  reason: "Owner accepted: the package half is a suggestion for the Savepoint runtime. The T-010/T-011 User Checks were not performed or recorded; this is owner acceptance, not technical CLEAR."
 history:
   - at: '2026-10-10T08:07:21Z'
     actor: {role: executor, session: t012-retrospective-20261010}
     kind: observed
     note: Goal 02 workflow retrospective (O-004, T-012) finding R7. Records were only read; no Task, Objective or Check was changed.
+  - at: '2026-10-10T20:43:58Z'
+    actor: {role: owner, session: owner-goal02-close-20261010T204358Z}
+    kind: owner_decision
+    note: "Owner accepted: the package half is a suggestion for the Savepoint runtime. The T-010/T-011 User Checks were not performed or recorded; this is owner acceptance, not technical CLEAR."
 ---
 
 # I-015: O-003 closed while T-010 and T-011 still lack the required owner acceptance

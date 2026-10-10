@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "capabilities": [
+    {
+      "capability": "complexity",
+      "provider": "lizard-csv",
+      "executable": "lizard",
+      "args": [
+        "--csv",
+        "-o",
+        ".savepoint/health/reports/root-lizard.csv",
+        "-x",
+        "*/node_modules/*",
+        "-x",
+        "*/dist/*",
+        "-x",
+        "*/.savepoint/*",
+        "-x",
+        "*.pb.go",
+        "-x",
+        "*_generated.*",
+        "-x",
+        "*.min.js",
+        "."
+      ],
+      "report": ".savepoint/health/reports/root-lizard.csv",
+      "exclusions": [
+        "node_modules/**",
+        "dist/**",
+        ".savepoint/**",
+        "**/*.pb.go",
+        "**/*_generated.*",
+        "**/*.min.js"
+      ]
+    },
+    {
+      "capability": "duplication",
+      "provider": "jscpd-json",
+      "executable": "jscpd",
+      "args": [
+        "--reporters",
+        "json",
+        "--output",
+        ".savepoint/health/reports/root",
+        "--workers",
+        "1",
+        "--ignore",
+        "node_modules/**,dist/**,.savepoint/**,**/*.pb.go,**/*_generated.*,**/*.min.js,**/testdata/**,**/.git/**",
+        "."
+      ],
+      "report": ".savepoint/health/reports/root/jscpd-report.json",
+      "exclusions": [
+        "node_modules/**",
+        "dist/**",
+        ".savepoint/**",
+        "**/*.pb.go",
+        "**/*_generated.*",
+        "**/*.min.js",
+        "**/testdata/**"
+      ]
+    },
+    {
+      "capability": "dependency_vulnerabilities",
+      "provider": "osv-scanner-json",
+      "executable": "osv-scanner",
+      "args": [
+        "scan",
+        "source",
+        "-r",
+        "--format",
+        "json",
+        "--output-file",
+        ".savepoint/health/reports/root-osv.json",
+        "--experimental-exclude",
+        "g:node_modules/**",
+        "--experimental-exclude",
+        "g:dist/**",
+        "--experimental-exclude",
+        "g:.savepoint/**",
+        "--experimental-exclude",
+        "g:**/*.pb.go",
+        "--experimental-exclude",
+        "g:**/*_generated.*",
+        "--experimental-exclude",
+        "g:**/*.min.js",
+        "."
+      ],
+      "report": ".savepoint/health/reports/root-osv.json",
+      "exclusions": [
+        "node_modules/**",
+        "dist/**",
+        ".savepoint/**",
+        "**/*.pb.go",
+        "**/*_generated.*",
+        "**/*.min.js"
+      ]
+    }
+  ]
+}

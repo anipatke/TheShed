@@ -37,7 +37,7 @@ async function detectNetworkingMode(host: Env): Promise<string | undefined> {
   return undefined;
 }
 
-interface Source {
+export interface Source {
   env: Env;
   method: string;
   discover: () => Promise<SourceOutput>;
@@ -46,14 +46,14 @@ interface Source {
 function sourcesFor(host: Env): Source[] {
   if (host === 'windows') {
     return [
-      { env: 'windows', method: 'PowerShell', discover: discoverWindows },
+      { env: 'windows', method: 'PowerShell', discover: () => discoverWindows() },
       { env: 'wsl', method: 'wsl.exe', discover: discoverWslFromWindows },
     ];
   }
   if (host === 'wsl') {
     return [
       { env: 'wsl', method: 'ss + /proc', discover: () => discoverPosixLocal('wsl') },
-      { env: 'windows', method: 'PowerShell (interop)', discover: discoverWindows },
+      { env: 'windows', method: 'PowerShell (interop)', discover: () => discoverWindows() },
     ];
   }
   return [{ env: 'linux', method: 'ss + /proc', discover: () => discoverPosixLocal('linux') }];
@@ -84,7 +84,7 @@ function displayName(l: Listener, packageName?: string, projectDir?: string, tit
   return { name: `Port ${l.port}`, nameSource: 'port' };
 }
 
-async function probeListener(l: Listener, host: Env, mode: string | undefined): Promise<{ probe: Probe; protocol: string }> {
+export async function probeListener(l: Listener, host: Env, mode: string | undefined): Promise<{ probe: Probe; protocol: string }> {
   const target = { host: probeHost(l, host), port: l.port };
   let result = await probe(target);
   let protocol = 'http:';
@@ -126,17 +126,10 @@ async function probeManual(config: Config): Promise<ManualStatus[]> {
   });
 }
 
-export interface ScanOptions {
-  serverPort: number;
-}
-
-export async function scan(config: Config, opts: ScanOptions): Promise<ScanResult> {
-  const started = Date.now();
-  const host = detectHost();
-  const modePromise = detectNetworkingMode(host);
-
+/** Run every source; one that throws becomes a failed report while the others still count (DISC-01). */
+export async function collectSources(list: Source[]): Promise<{ sources: SourceReport[]; listeners: Listener[]; distro?: string }> {
   const outputs = await Promise.all(
-    sourcesFor(host).map(async (src) => {
+    list.map(async (src) => {
       const t0 = Date.now();
       try {
         const out = await src.discover();
@@ -146,10 +139,8 @@ export async function scan(config: Config, opts: ScanOptions): Promise<ScanResul
       }
     }),
   );
-  const mode = await modePromise;
-
   const sources: SourceReport[] = [];
-  let listeners: Listener[] = [];
+  const listeners: Listener[] = [];
   let distro: string | undefined;
   for (const o of outputs) {
     if ('error' in o) {
@@ -160,10 +151,28 @@ export async function scan(config: Config, opts: ScanOptions): Promise<ScanResul
     listeners.push(...o.out.listeners);
     sources.push({ env: o.src.env, ok: true, method: o.out.method, count: o.out.listeners.length, ms: o.ms, notes: o.out.notes });
   }
+  return { sources, listeners, distro };
+}
 
-  // In WSL NAT mode, wslrelay.exe re-listens on Windows for each forwarded WSL port. Show it once.
+/** In WSL NAT mode, wslrelay.exe re-listens on Windows for each forwarded WSL port. Show it once. */
+export function dropRelayDuplicates(listeners: Listener[]): Listener[] {
   const wslPorts = new Set(listeners.filter((l) => l.env === 'wsl').map((l) => l.port));
-  listeners = listeners.filter((l) => !(l.env === 'windows' && /^wslrelay/i.test(l.processName ?? '') && wslPorts.has(l.port)));
+  return listeners.filter((l) => !(l.env === 'windows' && /^wslrelay/i.test(l.processName ?? '') && wslPorts.has(l.port)));
+}
+
+export interface ScanOptions {
+  serverPort: number;
+}
+
+export async function scan(config: Config, opts: ScanOptions): Promise<ScanResult> {
+  const started = Date.now();
+  const host = detectHost();
+  const modePromise = detectNetworkingMode(host);
+
+  const collected = await collectSources(sourcesFor(host));
+  const mode = await modePromise;
+  const { sources, distro } = collected;
+  const listeners = dropRelayDuplicates(collected.listeners);
 
   const ctx: HostContext = { host, distro };
   const services = await mapLimit(listeners, 16, async (l): Promise<Service> => {

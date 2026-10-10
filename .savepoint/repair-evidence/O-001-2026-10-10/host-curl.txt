@@ -1,0 +1,4 @@
+# Host header (curl, real server on 127.0.0.1:4799, WSL host) — 2026-10-10T03:29:23Z
+GET /api/state, Host: evil.example -> 421
+DELETE /api/hidden/x JSON {}, Host: evil.example -> 421
+DELETE /api/manual/missing, no Content-Type -> 415

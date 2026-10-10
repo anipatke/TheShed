@@ -1,7 +1,7 @@
 ---
 id: O-001
 title: Discovery spike and V1 dashboard
-status: in_progress
+status: done
 depends_on: []
 release: G-001
 priority: high

@@ -1,0 +1,408 @@
+{
+  "at": "2026-10-10T03:01:27.460Z",
+  "results": [
+    {
+      "id": "D Windows host retry without WSL port reservation",
+      "result": "pass",
+      "actual": {
+        "host": {
+          "env": "windows",
+          "networkingMode": "mirrored"
+        },
+        "sources": [
+          {
+            "env": "windows",
+            "ok": true,
+            "method": "PowerShell Get-NetTCPConnection",
+            "count": 35,
+            "ms": 1039,
+            "notes": [
+              "13 elevated/system process(es) hide their command line without admin.",
+              "Working directory is inferred from the command line; Windows does not expose it."
+            ]
+          },
+          {
+            "env": "wsl",
+            "ok": true,
+            "method": "wsl.exe → ss + /proc",
+            "count": 20,
+            "ms": 128,
+            "notes": [
+              "Default WSL distro only.",
+              "1 port(s) belong to other users; process details hidden without sudo."
+            ]
+          }
+        ],
+        "services": [
+          {
+            "env": "windows",
+            "port": 135,
+            "name": "svchost",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 139,
+            "name": "System",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 445,
+            "name": "System",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 1234,
+            "name": "LM Studio",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 5037,
+            "name": "adb",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 5040,
+            "name": "svchost",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 5357,
+            "name": "System",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 6327,
+            "name": "SteelSeriesGGEZ",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 6328,
+            "name": "SteelSeriesGGEZ",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 6329,
+            "name": "SteelSeriesGG",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 7679,
+            "name": "GoogleDriveFS",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 7680,
+            "name": "svchost",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 9010,
+            "name": "lghub_agent",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 9180,
+            "name": "lghub_updater",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 27036,
+            "name": "steam",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 35783,
+            "name": "EpicOnlineServicesUserHelper",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 41343,
+            "name": "LM Studio",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 42050,
+            "name": "OneDrive.Sync.Service",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 45654,
+            "name": "lghub_agent",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 49223,
+            "name": "node",
+            "kind": "web"
+          },
+          {
+            "env": "windows",
+            "port": 49664,
+            "name": "lsass",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 49665,
+            "name": "wininit",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 49666,
+            "name": "svchost",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 49667,
+            "name": "svchost",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 49669,
+            "name": "spoolsv",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 49696,
+            "name": "services",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 52697,
+            "name": "SteelSeriesGG",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 52706,
+            "name": "SteelSeriesEngine",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 52879,
+            "name": "SteelSeriesSonar",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 52894,
+            "name": "SteelSeriesPrism",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 55432,
+            "name": "postgres",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 63221,
+            "name": "steam",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 63225,
+            "name": "steam",
+            "kind": "http"
+          },
+          {
+            "env": "windows",
+            "port": 63243,
+            "name": "Riot Client",
+            "projectDir": "C:\\Riot Games\\Riot Client",
+            "kind": "tcp"
+          },
+          {
+            "env": "windows",
+            "port": 64518,
+            "name": "Code",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 3000,
+            "name": "main-portfolio",
+            "projectDir": "/home/user/code/main-portfolio",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5173,
+            "name": "andromeda",
+            "projectDir": "/home/user/code/galaxy",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5174,
+            "name": "sea-level",
+            "projectDir": "/home/user/code/aquaglobe",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5175,
+            "name": "astraeus-earth-moon-spike",
+            "projectDir": "/home/user/code/Astraeus",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 5199,
+            "name": "astraeus-earth-moon-spike",
+            "projectDir": "/home/user/code/Astraeus",
+            "kind": "web"
+          },
+          {
+            "env": "wsl",
+            "port": 11434,
+            "name": "Port 11434",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57104,
+            "name": "MainThread",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57180,
+            "name": "astraeus-earth-moon-spike",
+            "projectDir": "/home/user/code/Astraeus",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57462,
+            "name": "main-portfolio",
+            "projectDir": "/home/user/code/main-portfolio",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57498,
+            "name": "MainThread",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57510,
+            "name": "sea-level",
+            "projectDir": "/home/user/code/aquaglobe",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57700,
+            "name": "argus",
+            "projectDir": "/home/user/code/argus",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57770,
+            "name": "deep-time-globe",
+            "projectDir": "/home/user/code/deep-time",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 57810,
+            "name": "main-portfolio",
+            "projectDir": "/home/user/code/main-portfolio",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58004,
+            "name": "astraeus-earth-moon-spike",
+            "projectDir": "/home/user/code/Astraeus",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58076,
+            "name": "the-shed",
+            "projectDir": "/home/user/code/TheShed",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58392,
+            "name": "argus",
+            "projectDir": "/home/user/code/argus",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58462,
+            "name": "deep-time-globe",
+            "projectDir": "/home/user/code/deep-time",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58788,
+            "name": "sea-level",
+            "projectDir": "/home/user/code/aquaglobe",
+            "kind": "http"
+          },
+          {
+            "env": "wsl",
+            "port": 58822,
+            "name": "deep-time-globe",
+            "projectDir": "/home/user/code/deep-time",
+            "kind": "http"
+          }
+        ]
+      }
+    },
+    {
+      "id": "missing Host",
+      "status": 200
+    },
+    {
+      "id": "remote Origin",
+      "status": 403
+    },
+    {
+      "id": "nonJSON DELETE",
+      "status": 200
+    },
+    {
+      "id": "V3 supported API at capacity",
+      "status": 200,
+      "count": 500,
+      "newEntryPresent": false
+    }
+  ],
+  "log": "[shed] The Shed is running at http://localhost:49223  (bound to 127.0.0.1 only)\n[shed] Config: \\\\wsl.localhost\\Ubuntu\\tmp\\shed-c001-sDMoh2\\windows-final.json\n"
+}

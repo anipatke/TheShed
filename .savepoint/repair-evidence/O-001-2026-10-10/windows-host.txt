@@ -1,0 +1,27 @@
+# Windows-hosted discovery — Windows Node v24.14.0, server on Windows :4798, WSL networking mirrored — 2026-10-10T03:29:45Z
+{
+ "host": {
+  "env": "windows",
+  "networkingMode": "mirrored"
+ },
+ "sources": [
+  {
+   "env": "windows",
+   "ok": true,
+   "method": "PowerShell Get-NetTCPConnection",
+   "count": 35,
+   "ms": 1070
+  },
+  {
+   "env": "wsl",
+   "ok": true,
+   "method": "wsl.exe → ss + /proc",
+   "count": 20,
+   "ms": 124
+  }
+ ],
+ "services": 55,
+ "wslPortsAlsoAsWslrelay": 0
+}
+DELETE /api/manual/missing text/plain -> 415
+DELETE /api/manual/missing JSON {} -> 200

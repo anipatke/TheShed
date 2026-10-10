@@ -9,7 +9,7 @@ No database, no cloud, no accounts, no Docker, no admin rights. One Node process
 
 ## Quick start
 
-Requires Node **22.18+** (the server runs TypeScript directly, with no build step and no runtime dependencies).
+Requires Node **22.18+**. The server runs TypeScript directly, with no build step and no runtime dependencies. The UI is React, built with Vite.
 
 ```sh
 npm install
@@ -21,7 +21,7 @@ Development (API restarts on change, UI hot-reloads):
 
 ```sh
 npm run dev        # UI at http://localhost:4778, API proxied to :4777
-npm test           # parser, heuristic and probe tests (node:test)
+npm test           # discovery parsing, project inference, probe, config and folder tests (node:test)
 ```
 
 | Env var | Default | |
@@ -91,7 +91,7 @@ The Shed lists processes on your machine, so the server is locked down even thou
 
 - Listens on `127.0.0.1` only (the address is hard-coded).
 - Rejects any request whose `Host` isn't `localhost`/`127.0.0.1`/`[::1]`, which blocks DNS-rebinding attacks from web pages.
-- Mutations require `Content-Type: application/json` and a localhost `Origin` (or none), so other sites can't post to it.
+- Mutations, including `DELETE` (body `{}`), require `Content-Type: application/json` and a localhost `Origin` (or none), so other sites can't post to it.
 - The frontend can't make the server run anything. Discovery runs constant scripts through `execFile` (no shell interpolation), and no request data or service data ever reaches a command.
 - **Discovered services are untrusted**. Titles are reduced to plain text (tags, control and bidi characters stripped, capped at 120 chars) and rendered as text. Open links are built by the server from the port number, never taken from a service. `package.json` reads are size-capped and type-checked.
 - Manual project URLs must be `http(s)`. Only loopback URLs are probed, so the server can't be used as a proxy to other hosts.
@@ -120,20 +120,24 @@ Favourites and overrides are keyed by **project folder + process** (or `env + po
 ## Layout
 
 ```
-server/            Node HTTP server, no runtime deps
-  index.ts         routes, Host/Origin checks, static files
-  scan.ts          orchestration, caching, naming
-  identify.ts      cwd/command line → project folder → name
-  probe.ts         HTTP classification and title extraction
-  config.ts        validated JSON store
-  discovery/       posix.ts (ss + /proc), windows.ts (PowerShell, netstat fallback)
-client/            React + Vite UI
-shared/types.ts    types used by both
-docs/SPIKE.md      discovery spike findings (the technical baseline)
-docs/V1-DESIGN.md  V1 design, task breakdown, acceptance results
+server/                 Node HTTP server, no runtime deps
+  index.ts              routes, Host/Origin checks, static files from dist/
+  scan.ts               orchestration, caching, naming
+  identify.ts           cwd/command line → project folder → name
+  probe.ts              HTTP classification and title extraction
+  config.ts             validated JSON store
+  discovery/            listener.ts (shared types), posix.ts (ss + /proc),
+                        windows.ts (PowerShell, netstat fallback), run.ts (fixed-command runner)
+  *.test.ts             node:test suites
+client/                 React + Vite UI (src/: App, Card, api, model, styles)
+shared/types.ts         types used by both
+scripts/dev.mjs         runs the API and the Vite dev server together
+data/                   config.json lives here by default (git-ignored)
+docs/SPIKE.md           discovery spike findings (the technical baseline)
+docs/V1-DESIGN.md       V1 design, task breakdown, acceptance results
+AGENTS.md, .savepoint/  project planning and review records (Savepoint); not needed to run The Shed
 ```
 
 ## Not in V1
 
 Starting or stopping processes. The Shed only reads.
-# TheShed

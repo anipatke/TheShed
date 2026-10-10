@@ -1,0 +1,37 @@
+{
+  "at": "2026-10-10T03:33:57.143Z",
+  "dir": "/tmp/shed-c002-remaining-jCIndr",
+  "results": [
+    {
+      "id": "D source failure/fallback/relay neighbour matrix",
+      "result": "pass",
+      "actual": "real missing-tool/timeout errors, malformed PS fallback, retained other source, relay-only duplicate removed"
+    },
+    {
+      "id": "N TLS retry/truncation/cancellation/repeat independent fixture",
+      "result": "pass",
+      "actual": "HTTPS retry twice; mid-response cancellation/truncation settles twice before deadline"
+    },
+    {
+      "id": "A concurrent mutation during initial inflight scan",
+      "result": "pass",
+      "actual": {
+        "mutationStatus": 200,
+        "durableCount": 2,
+        "inflightManualStatusCount": 1,
+        "afterRefreshManualStatusCount": 2
+      }
+    },
+    {
+      "id": "A failure after successful config commit then recovery/retry",
+      "result": "pass",
+      "actual": {
+        "failureStatus": 500,
+        "publicError": "Internal error",
+        "durableCount": 1,
+        "recoveryStatus": 200,
+        "retryStatus": 200
+      }
+    }
+  ]
+}

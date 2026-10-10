@@ -30,7 +30,7 @@ status: active
 | `server/discovery/posix.ts` | WSL/Linux discovery script (`ss` + `/proc`) and parser; also run via `wsl.exe` from a Windows host |
 | `server/discovery/windows.ts` | Windows discovery (PowerShell `-EncodedCommand`) with `netstat`/`tasklist` fallback, and parsers |
 | `server/discovery/listener.ts` | `Listener` type, merge by env+port, text sanitising |
-| `server/discovery.test.ts` | `node:test` suite: parsers, inference, classification, real-socket probes, config validation |
+| `server/discovery.test.ts` | `node:test` suite: parsers, inference, folder identification, classification, real-socket probes (body cap, truncation, TLS retry), source orchestration and netstat fallback, wslrelay dedupe, config validation and capacity |
 | `shared/types.ts` | Types shared by server and client (`Service`, `Probe`, `Config`, `State`…) |
 | `client/src/App.tsx` | Page shell: masthead, refresh/auto, filter, add-project form, sections, discovery notes, hide-rule chips |
 | `client/src/Card.tsx` | Card, row, status lamp, kind tag, menu, inline rename/folder/manual edit form |
@@ -43,7 +43,7 @@ status: active
 
 **Scan pipeline:** sources (parallel) → `Listener[]` + `SourceReport[]` → merge by `env:port` → drop `wslrelay.exe` copies of WSL ports → per listener (16 at a time): identify + probe → `Service[]`. Manual projects are probed separately (8 at a time). The result is cached for 4 s; concurrent requests share one in-flight scan; `?refresh` bypasses the cache.
 
-**API** (all JSON; mutations need `Content-Type: application/json` and a localhost or absent `Origin`; body ≤ 16 KB; every response is the full `State`):
+**API** (all JSON; mutations need `Content-Type: application/json` and a localhost or absent `Origin`; body ≤ 16 KB; `DELETE` takes the body `{}`; an addition that would take a list past 500 entries is refused with 409 and nothing is written; every response is the full `State`):
 
 | Route | Effect |
 |---|---|
@@ -55,7 +55,7 @@ status: active
 | `PUT /api/overrides` | set/clear a user name and folder for an identity key |
 
 **Data ownership:**
-- The server owns `data/config.json` (path overridable by `SHED_CONFIG`). The client never writes storage except the auto-refresh preference in `localStorage`.
+- The server owns `data/config.json` (path overridable by `SHED_CONFIG`). Loading keeps every valid entry, however many; the 500-per-list limit applies only to additions. The client never writes storage except the auto-refresh preference in `localStorage`.
 - **Identity key** (`Service.favouriteKey`): `dir:<env>:<projectDir>#<processName>` when a folder is known, else `port:<env>:<port>`. Favourites and overrides are keyed by it. Manual projects use `manual:<id>`.
 - **Kind vs status** (client `model.ts`): probe `web`→Website, `http`→API, `tcp`→Other; status is Live for those three, Unverified for `unverified`, Offline for `closed` or a favourite not currently present.
 - **Unverified:** a discovered listener whose probe could not connect is reported `unverified`, never `closed`, because the OS has just reported it listening.
@@ -82,12 +82,13 @@ Verified by reading the code and by runs recorded in T-001 evidence:
 
 - All routes, validation and discovery described above exist and run. Gates: `npm run typecheck`, `npm run build`, `npm test` (21 tests) pass as of 2026-10-09T23:52Z.
 - Acceptance verified on one machine (Windows 11 + WSL2 Ubuntu, mirrored networking): WSL and Windows Vite apps discovered, identified, renamed, favourited, opened; preferences survived a restart that also moved the server from WSL Node to Windows Node.
-- Netstat fallback ran once, against real output, when an early PowerShell invocation failed. It is not covered by an automated forced-failure test.
+- Netstat fallback ran once, against real output, when an early PowerShell invocation failed; a `node:test` case now forces it with a fake runner.
+- 2026-10-10 repairs for I-001..I-005 (C-001): `npm test` 46 tests pass; the UI (row star, row rename/folder, hidden/offline/website cases, add-form failed save and retry) was driven in headless Windows Edge against a WSL-hosted server, mirrored networking.
 
 **Unknown / not examined:**
 - WSL NAT networking mode and plain (non-WSL) Linux: code paths exist but were not run.
 - Behaviour with a non-default WSL distro or no WSL installed on a Windows host: not run.
-- Client code (`model.ts`, components) has no automated tests; UI behaviour was checked by API calls and screenshots, not by scripted browser interaction.
+- Client code (`model.ts`, components) has no automated tests. UI behaviour has recorded scenarios (API calls, screenshots, and a scripted headless-Edge run for the 2026-10-10 repairs), not a test suite.
 - No linter is configured.
 
 ## Verification Contract

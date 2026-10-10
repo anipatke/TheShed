@@ -1,0 +1,110 @@
+[
+ {
+  "name": "JSON service appears as a row in Other listeners",
+  "expected": "row present",
+  "actual": "true",
+  "pass": true
+ },
+ {
+  "name": "Row has a favourite star",
+  "expected": "star present, kind API",
+  "actual": "{\"star\":true,\"kind\":\"API\"}",
+  "pass": true
+ },
+ {
+  "name": "Row menu offers \"Rename / set folder…\"",
+  "expected": "menu item present",
+  "actual": "true",
+  "pass": true
+ },
+ {
+  "name": "Edit form opens inside the row",
+  "expected": "form shown",
+  "actual": "true",
+  "pass": true
+ },
+ {
+  "name": "Invalid folder keeps form open with message and fields",
+  "expected": "error shown, name kept",
+  "actual": "{\"error\":\"Folder must be an absolute path\",\"name\":\"LM API\"}",
+  "pass": true
+ },
+ {
+  "name": "Failed save (server stopped) keeps edit form and fields",
+  "expected": "error shown, fields kept",
+  "actual": "{\"error\":\"Failed to fetch\",\"name\":\"LM API\",\"folder\":\"/home/user/code/lm-api\"}",
+  "pass": true
+ },
+ {
+  "name": "Retry after server restart saves rename + folder",
+  "expected": "form closes, row shows LM API, override saved",
+  "actual": "true [{\"key\":\"dir:wsl:/tmp/claude-1000/-home-user-code-TheShed/b32511e1-851c-45a2-bec9-103ffecfd5e8/scratchpad/ui/lm-api#node\",\"name\":\"LM API\",\"folder\":\"/home/user/code/lm-api\"}]",
+  "pass": true
+ },
+ {
+  "name": "Star on row favourites it (moves to Favourites as a card)",
+  "expected": "favourite saved, starred card",
+  "actual": "true favourites=LM API",
+  "pass": true
+ },
+ {
+  "name": "After restart: name, folder, favourite retained",
+  "expected": "starred LM API card with folder",
+  "actual": "{\"star\":true,\"folder\":\"~/code/lm-api\"}",
+  "pass": true
+ },
+ {
+  "name": "Unstar returns it to an unstarred row with the rename",
+  "expected": "row, unstarred, 0 favourites",
+  "actual": "true favourites=0",
+  "pass": true
+ },
+ {
+  "name": "Hidden row keeps star",
+  "expected": "hidden row with star",
+  "actual": "{\"star\":true,\"port\":\"4811\"}",
+  "pass": true
+ },
+ {
+  "name": "Hidden row menu has edit and Unhide",
+  "expected": "Rename / set folder…, Unhide",
+  "actual": "[\"Rename / set folder…\",\"Unhide\"]",
+  "pass": true
+ },
+ {
+  "name": "Unhide removes the rule (client DELETE with JSON body)",
+  "expected": "0 hide rules",
+  "actual": "hidden=0",
+  "pass": true
+ },
+ {
+  "name": "Offline favourite stays visible with star",
+  "expected": "offline starred card",
+  "actual": "true",
+  "pass": true
+ },
+ {
+  "name": "Add form: failed save (server stopped) keeps form and fields",
+  "expected": "error, fields kept, can retry",
+  "actual": "{\"error\":\"Failed to fetch\",\"fields\":[\"Docs\",\"http://localhost:5300\",\"/home/user/code/docs\"],\"submitEnabled\":true}",
+  "pass": true
+ },
+ {
+  "name": "Add form: retry succeeds, form closes, project saved",
+  "expected": "form closed, Docs card, saved",
+  "actual": "true manual=Docs:/home/user/code/docs",
+  "pass": true
+ },
+ {
+  "name": "Remove project from the card (client DELETE)",
+  "expected": "0 manual",
+  "actual": "manual=0",
+  "pass": true
+ },
+ {
+  "name": "Website card keeps star and edit menu",
+  "expected": "star + Rename / set folder…",
+  "actual": "{\"star\":true,\"items\":[\"Rename / set folder…\",\"Hide port 4812\",\"Hide everything from node\"]}",
+  "pass": true
+ }
+]
